@@ -1,0 +1,137 @@
+===============================================================
+  JEWELRY BILLING SYSTEM - EXE BUILD INSTRUCTIONS
+  (PyInstaller for Windows)
+===============================================================
+
+PREREQUISITES
+─────────────
+1. Install Python 3.10+ (64-bit) from https://python.org
+2. Install dependencies:
+     pip install -r requirements.txt
+     pip install pyinstaller
+
+3. IMPORTANT: Before building, get your machine fingerprint:
+     python app/machine_auth.py
+   Copy the printed fingerprint and paste it into:
+     app/constants.py → ALLOWED_MACHINE_ID = "YOUR_FINGERPRINT_HERE"
+
+
+STEP 1 – TEST IN DEVELOPMENT
+─────────────────────────────
+  cd jewelry_billing_system
+  python main.py
+
+Ensure everything works before building.
+
+
+STEP 2 – BUILD THE EXE
+────────────────────────
+Run from inside the jewelry_billing_system/ folder:
+
+  pyinstaller ^
+    --onefile ^
+    --windowed ^
+    --name "JewelryBillingSystem" ^
+    --add-data "assets/styles/main.qss;assets/styles" ^
+    --icon "assets/icons/app_icon.ico" ^
+    main.py
+
+On Linux/Mac (for testing):
+  pyinstaller \
+    --onefile \
+    --windowed \
+    --name "JewelryBillingSystem" \
+    --add-data "assets/styles/main.qss:assets/styles" \
+    main.py
+
+
+STEP 3 – OUTPUT
+───────────────
+The EXE will be created at:
+  dist/JewelryBillingSystem.exe
+
+Copy this single file to the target PC and run it.
+
+
+IMPORTANT NOTES
+───────────────
+1. C DRIVE DATA FOLDER:
+   The app always creates/reads data from:
+     C:\JewelryBillingSystem\data\
+   This works correctly from the EXE as the paths are hardcoded
+   in app/constants.py, not relative to the EXE location.
+
+2. MACHINE LOCK:
+   The ALLOWED_MACHINE_ID in constants.py must match the target PC.
+   To find the target PC's fingerprint, run machine_auth.py on that
+   PC before building, OR run the EXE once on the target PC and note
+   the machine ID shown in the error dialog, then rebuild.
+
+3. ASSETS (QSS Stylesheet):
+   The --add-data flag bundles the stylesheet into the EXE.
+   If the stylesheet is missing, the app still works but uses
+   default PyQt6 styling.
+
+4. ICON (.ico file):
+   Create a 256x256 .ico file and place at assets/icons/app_icon.ico
+   If missing, remove the --icon flag from the command above.
+
+5. ANTIVIRUS:
+   Some antivirus programs flag PyInstaller EXEs as suspicious.
+   Add the EXE to your antivirus whitelist, or code-sign the EXE.
+
+6. FIRST RUN ON TARGET PC:
+   Run the EXE once as Administrator so it can create:
+     C:\JewelryBillingSystem\
+   After that, normal user privileges are sufficient.
+
+7. TESTING THE EXE:
+   - Double-click dist/JewelryBillingSystem.exe
+   - On first run: Setup dialog appears → enter shop details
+   - Login with: admin / jewelry@123
+   - Verify all modules work
+
+8. MULTIPLE VERSIONS:
+   If you need to run on multiple PCs, set ALLOWED_MACHINE_ID = "ANY"
+   in constants.py (disables machine lock). Rebuild for each PC if you
+   want machine-specific copies.
+
+
+RUNTIME DEPENDENCIES CHECK
+───────────────────────────
+If the EXE crashes on launch, check dist/ for a .log file or run:
+  JewelryBillingSystem.exe > debug.log 2>&1
+
+Common issues:
+  - Missing Visual C++ Redistributable (install from Microsoft)
+  - Missing Qt6 DLLs (handled by PyInstaller, but verify)
+  - C:\ permission denied (run as admin first time)
+
+
+SPEC FILE CUSTOMIZATION
+────────────────────────
+PyInstaller generates a .spec file. For advanced bundling:
+
+  # jewelry_billing_system.spec
+  a = Analysis(
+      ['main.py'],
+      datas=[
+          ('assets/styles/main.qss', 'assets/styles'),
+          ('assets/icons/', 'assets/icons'),
+      ],
+      ...
+  )
+
+Run with:
+  pyinstaller jewelry_billing_system.spec
+
+
+DEFAULT LOGIN CREDENTIALS
+──────────────────────────
+  Username: admin
+  Password: jewelry@123
+
+CHANGE BEFORE DEPLOYMENT in:
+  app/constants.py → ADMIN_USERNAME, ADMIN_PASSWORD
+
+===============================================================
