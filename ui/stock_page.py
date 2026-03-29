@@ -6,12 +6,14 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QTableWidget, QTableWidgetItem, QMessageBox,
     QDialog, QFormLayout, QDoubleSpinBox, QSpinBox, QComboBox,
-    QGroupBox, QFrame, QHeaderView, QAbstractItemView, QScrollArea
+    QGroupBox, QFrame, QHeaderView, QAbstractItemView, QScrollArea,
+    QCompleter
 )
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont
 from services.stock_service import get_all_stock, add_item, update_item, delete_item
 from services.vendor_service import get_all_vendors
+from services.item_catalog_service import get_names as get_catalog_names, ensure_item_exists
 from models.stock_model import StockModel
 from app.utils import unique_id, format_currency
 from app.config import AppConfig
@@ -45,6 +47,13 @@ class StockDialog(QDialog):
         def ispin(mx=99999): s = QSpinBox(); s.setRange(0, mx); s.setMinimumHeight(32); return s
 
         self.txt_name  = le("Item name *")
+        _comp = QCompleter(get_catalog_names(), self)
+        _comp.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        _comp.setFilterMode(Qt.MatchFlag.MatchStartsWith)
+        self.txt_name.setCompleter(_comp)
+        # When a catalog item is selected auto-fill category
+        _comp.activated.connect(self._on_catalog_selected)
+
         self.cmb_cat   = QComboBox(); self.cmb_cat.addItems(AppConfig.categories()); self.cmb_cat.setMinimumHeight(32)
         self.cmb_pur   = QComboBox(); self.cmb_pur.addItems(PURITIES);   self.cmb_pur.setMinimumHeight(32)
         self.spn_gross = dspin(); self.spn_gross.setSuffix(" g")
@@ -83,6 +92,14 @@ class StockDialog(QDialog):
         btn_row.addWidget(btn_save); btn_row.addWidget(btn_cancel)
         root.addLayout(btn_row)
 
+    def _on_catalog_selected(self, name: str):
+        from services.item_catalog_service import get_item_by_name
+        entry = get_item_by_name(name)
+        if entry and entry.get("category"):
+            idx = self.cmb_cat.findText(entry["category"])
+            if idx >= 0:
+                self.cmb_cat.setCurrentIndex(idx)
+
     def _populate(self, item: dict):
         self.txt_name.setText(item.get("item_name",""))
         idx = self.cmb_cat.findText(item.get("category",""))
@@ -112,6 +129,8 @@ class StockDialog(QDialog):
             "vendor_name":    self.cmb_vend.currentText() if self.cmb_vend.currentIndex() > 0 else "",
             "remarks":        self.txt_rem.text().strip(),
         }
+        # Auto-add to item catalog if name is new
+        ensure_item_exists(self.result_data["item_name"], self.result_data["category"])
         self.accept()
 
 

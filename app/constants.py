@@ -19,8 +19,9 @@ ASSETS_DIR      = os.path.join(DATA_ROOT, "assets")   # ← logo, QR stored here
 
 # ─── JSON File Paths ────────────────────────────────────────
 SHOP_FILE       = os.path.join(DATA_DIR, "shop_details.json")
-STOCK_FILE      = os.path.join(DATA_DIR, "stock.json")
-VENDORS_FILE    = os.path.join(DATA_DIR, "vendors.json")
+STOCK_FILE          = os.path.join(DATA_DIR, "stock.json")
+ITEMS_CATALOG_FILE  = os.path.join(DATA_DIR, "item_catalog.json")
+VENDORS_FILE        = os.path.join(DATA_DIR, "vendors.json")
 CUSTOMERS_FILE  = os.path.join(DATA_DIR, "customers.json")
 INVOICES_FILE   = os.path.join(DATA_DIR, "invoices.json")
 SETTINGS_FILE   = os.path.join(DATA_DIR, "settings.json")

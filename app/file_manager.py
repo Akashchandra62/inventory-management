@@ -7,8 +7,8 @@ import json
 import logging
 from app.constants import (
     DATA_ROOT, DATA_DIR, BACKUP_DIR, INVOICES_PRINT, LOGS_DIR,
-    SHOP_FILE, STOCK_FILE, VENDORS_FILE, CUSTOMERS_FILE,
-    INVOICES_FILE, SETTINGS_FILE,
+    SHOP_FILE, STOCK_FILE, ITEMS_CATALOG_FILE, VENDORS_FILE,
+    CUSTOMERS_FILE, INVOICES_FILE, SETTINGS_FILE,
     DEFAULT_INVOICE_PREFIX, DEFAULT_TAX_PERCENT
 )
 
@@ -26,15 +26,18 @@ DEFAULT_STRUCTURES = {
         "default_tax": DEFAULT_TAX_PERCENT,
         "printer": ""
     },
-    STOCK_FILE:     [],
-    VENDORS_FILE:   [],
+    STOCK_FILE:          [],
+    ITEMS_CATALOG_FILE:  [],
+    VENDORS_FILE:        [],
     CUSTOMERS_FILE: [],
     INVOICES_FILE:  [],
     SETTINGS_FILE: {
         "invoice_prefix": DEFAULT_INVOICE_PREFIX,
         "default_tax": DEFAULT_TAX_PERCENT,
         "backup_folder": BACKUP_DIR,
-        "last_invoice_number": 0
+        "last_invoice_number": 0,
+        "username": "admin",
+        "password": "jewelry@123"
     }
 }
 
