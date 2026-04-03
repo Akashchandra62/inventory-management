@@ -2,7 +2,8 @@
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QTableWidget, QTableWidgetItem, QFrame,
-    QHeaderView, QAbstractItemView, QScrollArea, QComboBox
+    QHeaderView, QAbstractItemView, QScrollArea, QComboBox,
+    QDoubleSpinBox
 )
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont
@@ -46,16 +47,40 @@ class StockReportPage(QWidget):
         self.txt_s = QLineEdit(); self.txt_s.setPlaceholderText("Item name / vendor"); self.txt_s.setMinimumHeight(32)
         self.txt_s.textChanged.connect(self._apply_filter)
         fr.addWidget(self.txt_s)
+        fr.addStretch()
+        root.addLayout(fr)
+
+        # Low stock filter row
+        lf = QHBoxLayout()
+        lf.addWidget(QLabel("Low Stock — Column:"))
+
+        self.cmb_low_col = QComboBox()
+        self.cmb_low_col.setMinimumHeight(32)
+        self.cmb_low_col.setMinimumWidth(130)
+        self.cmb_low_col.addItems(["Quantity", "Gross Wt (g)", "Net Wt (g)"])
+        lf.addWidget(self.cmb_low_col)
+
+        lf.addWidget(QLabel("Below:"))
+        self.spn_threshold = QDoubleSpinBox()
+        self.spn_threshold.setRange(0, 99999)
+        self.spn_threshold.setDecimals(3)
+        self.spn_threshold.setValue(2)
+        self.spn_threshold.setMinimumHeight(32)
+        self.spn_threshold.setMinimumWidth(90)
+        lf.addWidget(self.spn_threshold)
+
         btn_low = QPushButton("⚠️  Low Stock Only")
         btn_low.setStyleSheet("background:#e74c3c; color:white; border-radius:4px; padding:6px 14px;")
         btn_low.clicked.connect(self._show_low)
-        fr.addWidget(btn_low)
+        lf.addWidget(btn_low)
+
         btn_all = QPushButton("Show All")
         btn_all.setStyleSheet("background:#7f8c8d; color:white; border-radius:4px; padding:6px 12px;")
         btn_all.clicked.connect(self.refresh)
-        fr.addWidget(btn_all)
-        fr.addStretch()
-        root.addLayout(fr)
+        lf.addWidget(btn_all)
+
+        lf.addStretch()
+        root.addLayout(lf)
 
         # Table
         self.tbl = QTableWidget()
@@ -113,7 +138,14 @@ class StockReportPage(QWidget):
         self._populate(data)
 
     def _show_low(self):
-        self._populate(get_low_stock())
+        col_map = {
+            "Quantity":     "quantity",
+            "Gross Wt (g)": "gross_weight",
+            "Net Wt (g)":   "net_weight",
+        }
+        col       = col_map[self.cmb_low_col.currentText()]
+        threshold = self.spn_threshold.value()
+        self._populate(get_low_stock(threshold=threshold, column=col))
 
     def _populate(self, data: list):
         self.tbl.setRowCount(0)

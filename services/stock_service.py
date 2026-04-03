@@ -52,5 +52,11 @@ def reduce_stock(item_name: str, quantity: int) -> bool:
     return save_all_stock(stock)
 
 
-def get_low_stock(threshold: int = 2) -> list:
-    return [s for s in get_all_stock() if s.get("quantity", 0) <= threshold]
+def get_low_stock(threshold: float = 2, column: str = "quantity") -> list:
+    col_map = {
+        "quantity":     "quantity",
+        "gross_weight": "gross_weight",
+        "net_weight":   "net_weight",
+    }
+    key = col_map.get(column, "quantity")
+    return [s for s in get_all_stock() if float(s.get(key, 0)) <= threshold]

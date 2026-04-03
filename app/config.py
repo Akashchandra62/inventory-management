@@ -51,6 +51,16 @@ class AppConfig:
             return 3.0
 
     @classmethod
+    def custom_stock_columns(cls) -> list:
+        """Returns list of dicts: [{name, type}] where type is 'text' or 'number'."""
+        return cls._settings.get("stock_custom_columns", [])
+
+    @classmethod
+    def save_custom_stock_columns(cls, columns: list) -> bool:
+        cls._settings["stock_custom_columns"] = columns
+        return cls.save_settings(cls._settings)
+
+    @classmethod
     def last_invoice_number(cls) -> int:
         try:
             return int(cls._settings.get("last_invoice_number", 0))
