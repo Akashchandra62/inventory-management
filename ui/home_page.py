@@ -2,15 +2,15 @@
 # ui/home_page.py - Dashboard Home Page
 # ============================================================
 
-from PyQt6.QtWidgets import (
+from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QFrame, QGridLayout, QScrollArea,
     QTableWidget, QTableWidgetItem, QHeaderView,
     QDateEdit, QLineEdit, QGroupBox, QAbstractItemView,
     QSizePolicy
 )
-from PyQt6.QtCore import Qt, pyqtSignal, QDate
-from PyQt6.QtGui import QFont, QCursor
+from PyQt5.QtCore import Qt, pyqtSignal, QDate
+from PyQt5.QtGui import QFont, QCursor
 from app.config import AppConfig
 from services.invoice_service import get_all_invoices
 from services.stock_service import get_all_stock, get_low_stock
@@ -37,7 +37,7 @@ class StatCard(QFrame):
     def __init__(self, key: str, icon: str, title: str, value: str, color: str = "#2c3e50"):
         super().__init__()
         self.key = key
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setCursor(Qt.PointingHandCursor)
         self.setObjectName("stat_card")
         self.setStyleSheet(f"""
             QFrame#stat_card {{
@@ -64,7 +64,7 @@ class StatCard(QFrame):
         ico.setStyleSheet("background: transparent; border: none;")
 
         val = QLabel(value)
-        val.setFont(QFont("Segoe UI", 20, QFont.Weight.Bold))
+        val.setFont(QFont("Segoe UI", 20, QFont.Bold))
         val.setStyleSheet(f"color: {color}; background: transparent; border: none;")
 
         lbl = QLabel(title)
@@ -94,7 +94,7 @@ class HomePage(QWidget):
         self.setObjectName("content_area")
         scroll = QScrollArea(self)
         scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setFrameShape(QFrame.NoFrame)
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.addWidget(scroll)
@@ -110,7 +110,7 @@ class HomePage(QWidget):
         shop  = AppConfig.shop().get("shop_name", "Jewelry Shop")
         title = QLabel(f"Dashboard – {shop}")
         title.setObjectName("page_title")
-        title.setFont(QFont("Segoe UI", 18, QFont.Weight.Bold))
+        title.setFont(QFont("Segoe UI", 18, QFont.Bold))
         dt_lbl = QLabel(today)
         dt_lbl.setStyleSheet("color: #7f8c8d; font-size: 12px;")
 
@@ -201,8 +201,8 @@ class HomePage(QWidget):
         self.tbl = QTableWidget()
         self.tbl.setMinimumHeight(350)
         self.tbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        self.tbl.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.tbl.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.tbl.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.tbl.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.tbl.setAlternatingRowColors(True)
         self.tbl.setSortingEnabled(True)
         layout.addWidget(self.tbl)
@@ -373,13 +373,13 @@ class HomePage(QWidget):
         self.tbl.setRowCount(0)
         
         if len(headers) > 0:
-            self.tbl.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+            self.tbl.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
 
         for row_idx, row_data in enumerate(data):
             self.tbl.insertRow(row_idx)
             for col_idx, cell_value in enumerate(row_data):
                 item = NumericTableItem(str(cell_value))
-                item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                item.setTextAlignment(Qt.AlignCenter)
                 self.tbl.setItem(row_idx, col_idx, item)
                 
         self.tbl.setSortingEnabled(True)

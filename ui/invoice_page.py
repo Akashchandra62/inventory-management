@@ -2,14 +2,14 @@
 # ui/invoice_page.py - Invoice / Billing Page (Jewelry Format)
 # ============================================================
 
-from PyQt6.QtWidgets import (
+from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QTableWidget, QTableWidgetItem, QMessageBox,
     QGroupBox, QFormLayout, QDoubleSpinBox, QSpinBox,
     QComboBox, QFrame, QScrollArea, QHeaderView, QAbstractItemView
 )
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QFont
+from PyQt5.QtCore import Qt
+from PyQt5.QtGui import QFont
 from app.config import AppConfig
 from app.utils import format_currency
 from app.printer_helper import save_invoice_as_pdf
@@ -29,7 +29,7 @@ class InvoicePage(QWidget):
     def _build_ui(self):
         scroll = QScrollArea(self)
         scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setFrameShape(QFrame.NoFrame)
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.addWidget(scroll)
@@ -43,7 +43,7 @@ class InvoicePage(QWidget):
         # Title bar
         top = QHBoxLayout()
         title = QLabel("🧾  New Invoice")
-        title.setFont(QFont("Segoe UI", 16, QFont.Weight.Bold))
+        title.setFont(QFont("Segoe UI", 16, QFont.Bold))
         self._inv_num_lbl = QLabel()
         self._inv_num_lbl.setStyleSheet("color: #f39c12; font-size: 14px; font-weight: bold;")
         top.addWidget(title)
@@ -55,7 +55,7 @@ class InvoicePage(QWidget):
         cust_grp = QGroupBox("Customer Details")
         cf = QFormLayout(cust_grp)
         cf.setSpacing(8)
-        cf.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        cf.setLabelAlignment(Qt.AlignRight)
 
         self.txt_cname    = QLineEdit(); self.txt_cname.setPlaceholderText("Customer name *")
         self.txt_cmobile  = QLineEdit(); self.txt_cmobile.setPlaceholderText("Mobile number")
@@ -137,7 +137,7 @@ class InvoicePage(QWidget):
         il.addLayout(row1)
         il.addLayout(row2)
         il.addLayout(row3)
-        il.addWidget(btn_add, alignment=Qt.AlignmentFlag.AlignRight)
+        il.addWidget(btn_add, alignment=Qt.AlignRight)
         root.addWidget(item_grp)
 
         # ── Items Table ───────────────────────────────────────
@@ -151,9 +151,9 @@ class InvoicePage(QWidget):
             "Gross Wt", "Less Wt", "Nett Wt",
             "Rate/g", "Making", "Amount"
         ])
-        self.tbl_items.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        self.tbl_items.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.tbl_items.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.tbl_items.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.tbl_items.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.tbl_items.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.tbl_items.setAlternatingRowColors(True)
         self.tbl_items.setMinimumHeight(180)
 
@@ -165,7 +165,7 @@ class InvoicePage(QWidget):
         btn_del.clicked.connect(self._remove_item)
 
         itl.addWidget(self.tbl_items)
-        itl.addWidget(btn_del, alignment=Qt.AlignmentFlag.AlignRight)
+        itl.addWidget(btn_del, alignment=Qt.AlignRight)
         root.addWidget(items_grp)
 
         # ── Tax + Payment ─────────────────────────────────────
@@ -175,7 +175,7 @@ class InvoicePage(QWidget):
         pay_grp = QGroupBox("Payment Details")
         pfl = QFormLayout(pay_grp)
         pfl.setSpacing(8)
-        pfl.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        pfl.setLabelAlignment(Qt.AlignRight)
 
         self.spn_cash  = QDoubleSpinBox(); self.spn_cash.setRange(0, 9999999); self.spn_cash.setDecimals(2); self.spn_cash.setPrefix("₹ ")
         self.spn_due   = QDoubleSpinBox(); self.spn_due.setRange(0, 9999999);  self.spn_due.setDecimals(2);  self.spn_due.setPrefix("₹ ")
@@ -195,7 +195,7 @@ class InvoicePage(QWidget):
             "QFrame { background:white; border:1px solid #e0e0e0; border-radius:6px; padding:10px; }"
         )
         tfl = QFormLayout(totals_frame)
-        tfl.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        tfl.setLabelAlignment(Qt.AlignRight)
         tfl.setSpacing(8)
 
         self.lbl_subtotal = QLabel("₹ 0.00")
@@ -204,7 +204,7 @@ class InvoicePage(QWidget):
         self.lbl_cgst_amt = QLabel("₹ 0.00")
         self.lbl_sgst_amt = QLabel("₹ 0.00")
         self.lbl_grand    = QLabel("₹ 0.00")
-        self.lbl_grand.setFont(QFont("Segoe UI", 14, QFont.Weight.Bold))
+        self.lbl_grand.setFont(QFont("Segoe UI", 14, QFont.Bold))
         self.lbl_grand.setStyleSheet("color: #27ae60;")
 
         for w in (self.spn_cgst, self.spn_sgst):
@@ -336,7 +336,7 @@ class InvoicePage(QWidget):
             ]
             for j, v in enumerate(vals):
                 cell = QTableWidgetItem(v)
-                cell.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                cell.setTextAlignment(Qt.AlignCenter)
                 self.tbl_items.setItem(i, j, cell)
 
     def _remove_item(self):

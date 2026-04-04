@@ -2,12 +2,12 @@
 # ui/login_window.py - Login Window
 # ============================================================
 
-from PyQt6.QtWidgets import (
+from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QLineEdit, QPushButton, QCheckBox, QMessageBox, QFrame
 )
-from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QFont
+from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtGui import QFont
 from services.auth_service import authenticate
 from app.constants import APP_NAME, COLOR_ACCENT
 
@@ -35,21 +35,21 @@ class LoginWindow(QWidget):
         banner.setStyleSheet("background-color: #2c3e50;")
         banner.setMinimumWidth(380)
         bl = QVBoxLayout(banner)
-        bl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        bl.setAlignment(Qt.AlignCenter)
 
         gem = QLabel("💎")
         gem.setFont(QFont("Segoe UI", 52))
-        gem.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        gem.setAlignment(Qt.AlignCenter)
         gem.setStyleSheet("color: #f39c12; background: transparent;")
 
         title = QLabel(APP_NAME)
-        title.setFont(QFont("Segoe UI", 18, QFont.Weight.Bold))
-        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title.setFont(QFont("Segoe UI", 18, QFont.Bold))
+        title.setAlignment(Qt.AlignCenter)
         title.setStyleSheet("color: #f39c12; background: transparent;")
 
         sub = QLabel("Jewelry Shop Billing System")
         sub.setFont(QFont("Segoe UI", 11))
-        sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        sub.setAlignment(Qt.AlignCenter)
         sub.setStyleSheet("color: #ecf0f1; background: transparent;")
 
         bl.addWidget(gem)
@@ -60,7 +60,7 @@ class LoginWindow(QWidget):
         right = QFrame()
         right.setStyleSheet("background-color: #f5f6fa;")
         rl = QVBoxLayout(right)
-        rl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        rl.setAlignment(Qt.AlignCenter)
         rl.setContentsMargins(60, 40, 60, 40)
 
         card = QFrame()
@@ -75,7 +75,7 @@ class LoginWindow(QWidget):
         cl.setSpacing(20)
 
         welcome = QLabel("Welcome Back")
-        welcome.setFont(QFont("Segoe UI", 24, QFont.Weight.Bold))
+        welcome.setFont(QFont("Segoe UI", 24, QFont.Bold))
         welcome.setStyleSheet("color: #2c3e50; background: transparent;")
 
         sign_in = QLabel("Sign in to continue")
@@ -131,7 +131,7 @@ class LoginWindow(QWidget):
         cl.addSpacing(6)
         cl.addWidget(self.btn_login)
 
-        rl.addWidget(card, alignment=Qt.AlignmentFlag.AlignCenter)
+        rl.addWidget(card, alignment=Qt.AlignCenter)
 
         root.addWidget(banner)
         root.addWidget(right, 1)

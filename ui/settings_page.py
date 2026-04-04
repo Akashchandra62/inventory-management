@@ -5,18 +5,18 @@
 import os
 import shutil
 
-from PyQt6.QtWidgets import (
+from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QGroupBox, QMessageBox, QFrame, QScrollArea,
     QTextEdit, QFileDialog, QTabWidget, QSizePolicy, QApplication,
     QLayout, QSpacerItem, QGraphicsOpacityEffect,
     QComboBox, QCompleter
 )
-from PyQt6.QtCore import (
+from PyQt5.QtCore import (
     Qt, pyqtSignal, QPropertyAnimation, QEasingCurve,
     QPoint, QSize, QRect, QMimeData, QByteArray, QTimer
 )
-from PyQt6.QtGui import (
+from PyQt5.QtGui import (
     QFont, QPixmap, QPainter, QPen, QColor, QPainterPath,
     QIcon, QDrag
 )
@@ -47,13 +47,13 @@ def _ensure_assets_dir():
 def _eye_icon(visible: bool) -> QIcon:
     size = 22
     pix = QPixmap(size, size)
-    pix.fill(Qt.GlobalColor.transparent)
+    pix.fill(Qt.transparent)
     p = QPainter(pix)
     p.setRenderHint(QPainter.RenderHint.Antialiasing)
     pen = QPen(QColor("#555555"), 1.8)
-    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+    pen.setCapStyle(Qt.RoundCap)
     p.setPen(pen)
-    p.setBrush(Qt.BrushStyle.NoBrush)
+    p.setBrush(Qt.NoBrush)
     path = QPainterPath()
     path.moveTo(1, size / 2)
     path.quadTo(size / 2, 3, size - 1, size / 2)
@@ -65,7 +65,7 @@ def _eye_icon(visible: bool) -> QIcon:
         p.drawEllipse(int(size / 2 - r), int(size / 2 - r), int(r * 2), int(r * 2))
     else:
         pen2 = QPen(QColor("#555555"), 1.8)
-        pen2.setCapStyle(Qt.PenCapStyle.RoundCap)
+        pen2.setCapStyle(Qt.RoundCap)
         p.setPen(pen2)
         p.drawLine(4, size - 4, size - 4, 4)
     p.end()
@@ -75,11 +75,11 @@ def _eye_icon(visible: bool) -> QIcon:
 def _close_icon() -> QIcon:
     size = 16
     pix = QPixmap(size, size)
-    pix.fill(Qt.GlobalColor.transparent)
+    pix.fill(Qt.transparent)
     p = QPainter(pix)
     p.setRenderHint(QPainter.RenderHint.Antialiasing)
     pen = QPen(QColor("#ffffff"), 2.0)
-    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+    pen.setCapStyle(Qt.RoundCap)
     p.setPen(pen)
     margin = 4
     p.drawLine(margin, margin, size - margin, size - margin)
@@ -109,7 +109,7 @@ class FlowLayout(QLayout):
         return self._items.pop(index) if 0 <= index < len(self._items) else None
 
     def expandingDirections(self):
-        return Qt.Orientation(0)
+        return Qt.Orientations()
 
     def hasHeightForWidth(self):
         return True
@@ -162,7 +162,7 @@ class CategoryChip(QFrame):
         self._build()
 
     def _build(self):
-        self.setCursor(Qt.CursorShape.OpenHandCursor)
+        self.setCursor(Qt.OpenHandCursor)
         self.setFixedHeight(32)
 
         hl = QHBoxLayout(self)
@@ -180,7 +180,7 @@ class CategoryChip(QFrame):
         btn_del.setIcon(_close_icon())
         btn_del.setIconSize(QSize(10, 10))
         btn_del.setFixedSize(18, 18)
-        btn_del.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_del.setCursor(Qt.PointingHandCursor)
         btn_del.setStyleSheet(
             "QPushButton{background:rgba(0,0,0,0.22);color:white;"
             "border-radius:9px;border:none;}"
@@ -223,12 +223,12 @@ class CategoryChip(QFrame):
         self._anim = anim  # keep reference
 
     def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
+        if event.button() == Qt.LeftButton:
             self._drag_start = event.position().toPoint()
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
-        if (event.buttons() & Qt.MouseButton.LeftButton and
+        if (event.buttons() & Qt.LeftButton and
                 self._drag_start is not None):
             delta = (event.position().toPoint() - self._drag_start).manhattanLength()
             if delta >= QApplication.startDragDistance():
@@ -244,7 +244,7 @@ class CategoryChip(QFrame):
         # Build a slightly transparent pixmap so the cursor image looks lifted
         src = self.grab()
         dragged_pix = QPixmap(src.size())
-        dragged_pix.fill(Qt.GlobalColor.transparent)
+        dragged_pix.fill(Qt.transparent)
         p = QPainter(dragged_pix)
         p.setOpacity(0.85)
         p.drawPixmap(0, 0, src)
@@ -256,13 +256,13 @@ class CategoryChip(QFrame):
         ghost = QGraphicsOpacityEffect(self)
         self.setGraphicsEffect(ghost)
         ghost.setOpacity(0.25)
-        self.setCursor(Qt.CursorShape.ClosedHandCursor)
+        self.setCursor(Qt.ClosedHandCursor)
 
-        drag.exec(Qt.DropAction.MoveAction)
+        drag.exec(Qt.MoveAction)
 
         # Restore after drop
         self.setGraphicsEffect(None)
-        self.setCursor(Qt.CursorShape.OpenHandCursor)
+        self.setCursor(Qt.OpenHandCursor)
 
 
 # ─── Categories Editor ──────────────────────────────────────
@@ -300,7 +300,7 @@ class CategoriesEditor(QWidget):
 
         btn_add = QPushButton("+ Add")
         btn_add.setFixedSize(72, 34)
-        btn_add.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_add.setCursor(Qt.PointingHandCursor)
         btn_add.setStyleSheet(
             "QPushButton{background:#3498db;color:white;border-radius:6px;"
             "font-size:13px;font-weight:600;border:none;}"
@@ -413,7 +413,7 @@ class CategoriesEditor(QWidget):
 
     def eventFilter(self, obj, event):
         if obj is self._chips_widget:
-            from PyQt6.QtCore import QEvent
+            from PyQt5.QtCore import QEvent
             if event.type() == QEvent.Type.DragEnter:
                 if event.mimeData().hasText():
                     event.acceptProposedAction()
@@ -502,7 +502,7 @@ def _scroll_tab():
     outer = QWidget()
     scroll = QScrollArea()
     scroll.setWidgetResizable(True)
-    scroll.setFrameShape(QFrame.Shape.NoFrame)
+    scroll.setFrameShape(QFrame.NoFrame)
     scroll.setWidget(outer)
     root = QVBoxLayout(outer)
     root.setContentsMargins(24, 20, 24, 24)
@@ -542,7 +542,7 @@ def _save_btn(label="💾  Save Changes"):
     b = QPushButton(label)
     b.setFixedHeight(40)
     b.setMaximumWidth(220)
-    b.setCursor(Qt.CursorShape.PointingHandCursor)
+    b.setCursor(Qt.PointingHandCursor)
     b.setStyleSheet(
         "QPushButton{background:#f39c12;color:white;border-radius:7px;"
         "font-size:13px;font-weight:bold;border:none;}"
@@ -573,7 +573,7 @@ class SettingsPage(QWidget):
         tb_l = QHBoxLayout(title_bar)
         tb_l.setContentsMargins(24, 0, 24, 0)
         lbl_title = QLabel("⚙️  Settings")
-        lbl_title.setFont(QFont("Segoe UI", 15, QFont.Weight.Bold))
+        lbl_title.setFont(QFont("Segoe UI", 15, QFont.Bold))
         lbl_title.setStyleSheet("color:white;")
         tb_l.addWidget(lbl_title)
         tb_l.addStretch()
@@ -658,7 +658,7 @@ class SettingsPage(QWidget):
 
         btn_add_cat = QPushButton("+ Add")
         btn_add_cat.setFixedHeight(36)
-        btn_add_cat.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_add_cat.setCursor(Qt.PointingHandCursor)
         btn_add_cat.setStyleSheet(
             "QPushButton{background:#3949ab;color:white;border-radius:6px;"
             "font-size:13px;font-weight:600;border:none;padding:0 18px;}"
@@ -673,7 +673,7 @@ class SettingsPage(QWidget):
 
         # Divider
         div = QFrame()
-        div.setFrameShape(QFrame.Shape.HLine)
+        div.setFrameShape(QFrame.HLine)
         div.setStyleSheet("color:#e8ecef;")
         sec_l.addWidget(div)
 
@@ -689,7 +689,7 @@ class SettingsPage(QWidget):
         self._cat_search.textChanged.connect(self._filter_catalog)
         self._catalog_count = QLabel("0 items")
         self._catalog_count.setStyleSheet("color:#7f8c8d;font-size:11px;min-width:60px;")
-        self._catalog_count.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self._catalog_count.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         search_row.addWidget(self._cat_search, 1)
         search_row.addWidget(self._catalog_count)
         sec_l.addLayout(search_row)
@@ -732,7 +732,7 @@ class SettingsPage(QWidget):
 
         if not visible:
             placeholder = QLabel("No items yet — add one using the form below.")
-            placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            placeholder.setAlignment(Qt.AlignCenter)
             placeholder.setStyleSheet(
                 "color:#b2bec3;font-size:13px;padding:28px;background:transparent;"
             )
@@ -785,7 +785,7 @@ class SettingsPage(QWidget):
         btn_edit = QPushButton("✎  Edit")
         btn_edit.setFixedHeight(30)
         btn_edit.setMinimumWidth(68)
-        btn_edit.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_edit.setCursor(Qt.PointingHandCursor)
         btn_edit.setStyleSheet(
             "QPushButton{background:#eef2ff;color:#3949ab;border-radius:6px;"
             "font-size:11px;font-weight:600;border:1px solid #c5cae9;padding:0 10px;}"
@@ -795,7 +795,7 @@ class SettingsPage(QWidget):
 
         btn_del = QPushButton("✕")
         btn_del.setFixedSize(30, 30)
-        btn_del.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_del.setCursor(Qt.PointingHandCursor)
         btn_del.setStyleSheet(
             "QPushButton{background:#fdecea;color:#c0392b;border-radius:6px;"
             "font-size:12px;font-weight:700;border:1px solid #f5c6cb;}"
@@ -828,7 +828,7 @@ class SettingsPage(QWidget):
 
     def _edit_catalog_item(self, old_name: str):
         # Inline: show a small dialog to rename
-        from PyQt6.QtWidgets import QDialog, QDialogButtonBox
+        from PyQt5.QtWidgets import QDialog, QDialogButtonBox
         dlg = QDialog(self)
         dlg.setWindowTitle("Edit Item")
         dlg.setMinimumWidth(320)
@@ -860,7 +860,7 @@ class SettingsPage(QWidget):
                 cmb.setCurrentIndex(idx)
 
         bb = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
+            QDialogButtonBox.Save | QDialogButtonBox.Cancel
         )
         bb.accepted.connect(dlg.accept)
         bb.rejected.connect(dlg.reject)
@@ -869,7 +869,7 @@ class SettingsPage(QWidget):
         vl.addWidget(lbl2); vl.addWidget(cmb)
         vl.addWidget(bb)
 
-        if dlg.exec() != QDialog.DialogCode.Accepted:
+        if dlg.exec() != QDialog.Accepted:
             return
         new_name = txt.text().strip()
         new_cat  = cmb.currentText()
@@ -884,9 +884,9 @@ class SettingsPage(QWidget):
         reply = QMessageBox.question(
             self, "Remove Item",
             f'Remove "{name}" from the catalog?',
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            QMessageBox.Yes | QMessageBox.No
         )
-        if reply == QMessageBox.StandardButton.Yes:
+        if reply == QMessageBox.Yes:
             delete_catalog_item(name)
             self._refresh_catalog()
 
@@ -935,7 +935,7 @@ class SettingsPage(QWidget):
         btn_cred = QPushButton("Update Credentials")
         btn_cred.setFixedHeight(36)
         btn_cred.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        btn_cred.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_cred.setCursor(Qt.PointingHandCursor)
         btn_cred.setStyleSheet(
             "QPushButton{background:#8e44ad;color:white;border-radius:6px;"
             "font-size:13px;font-weight:bold;border:none;}"
@@ -956,7 +956,7 @@ class SettingsPage(QWidget):
 
         self.lbl_logo_preview = QLabel("No logo\nuploaded")
         self.lbl_logo_preview.setFixedSize(100, 100)
-        self.lbl_logo_preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lbl_logo_preview.setAlignment(Qt.AlignCenter)
         self.lbl_logo_preview.setStyleSheet(
             "border:2px dashed #bdc3c7;border-radius:8px;color:#7f8c8d;font-size:11px;"
         )
@@ -996,29 +996,32 @@ class SettingsPage(QWidget):
             r = QHBoxLayout()
             lbl = QLabel(label)
             lbl.setFixedWidth(130)
-            lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
             lbl.setStyleSheet("color:#555;font-size:12px;")
             r.addWidget(lbl)
             r.addWidget(widget)
             info_l.addLayout(r)
 
-        self.txt_name         = _le("Shop name *")
-        self.txt_tagline      = _le("e.g. Deals In All Type Of Hallmark Jewellery")
-        self.txt_owner        = _le("Owner / Proprietor name")
-        self.txt_addr         = _le("Full shop address")
-        self.txt_mobile       = _le("Primary mobile number")
-        self.txt_mobile2      = _le("Second mobile (optional)")
-        self.txt_gst          = _le("GST number")
-        self.txt_email        = _le("Email (optional)")
+        self.txt_name            = _le("Shop name *")
+        self.txt_tagline         = _le("e.g. Deals In All Type Of Hallmark Jewellery")
+        self.txt_owner           = _le("Owner / Proprietor name")
+        self.txt_addr            = _le("Full shop address")
+        self.txt_mobile          = _le("Primary mobile number")
+        self.txt_mobile2         = _le("Second mobile (optional)")
+        self.txt_gst             = _le("GST number")
+        self.txt_email           = _le("Email (optional)")
+        self.txt_invoice_heading = _le("e.g. \u0936\u094d\u0930\u0940 \u0917\u0923\u0947\u0936\u093e\u092f \u0928\u092e\u0903  (shown between GSTIN and Phone in invoice)")
+        self.txt_invoice_heading.setInputMethodHints(Qt.ImhNoPredictiveText)
 
-        row("Shop Name *",   self.txt_name)
-        row("Tagline",       self.txt_tagline)
-        row("Owner Name",    self.txt_owner)
-        row("Address *",     self.txt_addr)
-        row("Mobile *",      self.txt_mobile)
-        row("Mobile 2",      self.txt_mobile2)
-        row("GST Number",    self.txt_gst)
-        row("Email",         self.txt_email)
+        row("Shop Name *",      self.txt_name)
+        row("Tagline",          self.txt_tagline)
+        row("Owner Name",       self.txt_owner)
+        row("Address *",        self.txt_addr)
+        row("Mobile *",         self.txt_mobile)
+        row("Mobile 2",         self.txt_mobile2)
+        row("GST Number",       self.txt_gst)
+        row("Email",            self.txt_email)
+        row("Invoice Heading",  self.txt_invoice_heading)
 
         root.addWidget(info_sec)
 
@@ -1044,7 +1047,7 @@ class SettingsPage(QWidget):
             r = QHBoxLayout()
             lbl = QLabel(label)
             lbl.setFixedWidth(130)
-            lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
             lbl.setStyleSheet("color:#555;font-size:12px;")
             r.addWidget(lbl)
             r.addWidget(widget)
@@ -1071,7 +1074,7 @@ class SettingsPage(QWidget):
 
         self.lbl_qr_preview = QLabel("No QR code\nuploaded")
         self.lbl_qr_preview.setFixedSize(120, 120)
-        self.lbl_qr_preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lbl_qr_preview.setAlignment(Qt.AlignCenter)
         self.lbl_qr_preview.setStyleSheet(
             "border:2px dashed #bdc3c7;border-radius:8px;color:#7f8c8d;font-size:11px;"
         )
@@ -1140,7 +1143,7 @@ class SettingsPage(QWidget):
             r = QHBoxLayout()
             lbl = QLabel(label)
             lbl.setFixedWidth(150)
-            lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
             lbl.setStyleSheet("color:#555;font-size:12px;")
             r.addWidget(lbl)
             r.addWidget(widget)
@@ -1256,8 +1259,8 @@ class SettingsPage(QWidget):
     def _load_logo_preview(self):
         if os.path.exists(LOGO_FILE):
             pix = QPixmap(LOGO_FILE).scaled(
-                96, 96, Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation)
+                96, 96, Qt.KeepAspectRatio,
+                Qt.SmoothTransformation)
             self.lbl_logo_preview.setPixmap(pix)
             self.lbl_logo_preview.setText("")
         else:
@@ -1267,8 +1270,8 @@ class SettingsPage(QWidget):
     def _load_qr_preview(self):
         if os.path.exists(QR_FILE):
             pix = QPixmap(QR_FILE).scaled(
-                116, 116, Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation)
+                116, 116, Qt.KeepAspectRatio,
+                Qt.SmoothTransformation)
             self.lbl_qr_preview.setPixmap(pix)
             self.lbl_qr_preview.setText("")
         else:
@@ -1290,6 +1293,7 @@ class SettingsPage(QWidget):
         self.txt_mobile2.setText(shop.get("mobile2", ""))
         self.txt_gst.setText(shop.get("gst_number", ""))
         self.txt_email.setText(shop.get("email", ""))
+        self.txt_invoice_heading.setText(shop.get("invoice_heading", ""))
         self.txt_state.setText(shop.get("state", ""))
         self.txt_jurisdiction.setText(shop.get("jurisdiction", ""))
         self.txt_prefix.setText(shop.get("invoice_prefix", "JB"))
@@ -1320,8 +1324,9 @@ class SettingsPage(QWidget):
             "address":        self.txt_addr.text().strip(),
             "mobile":         self.txt_mobile.text().strip(),
             "mobile2":        self.txt_mobile2.text().strip(),
-            "gst_number":     self.txt_gst.text().strip(),
-            "email":          self.txt_email.text().strip(),
+            "gst_number":       self.txt_gst.text().strip(),
+            "email":            self.txt_email.text().strip(),
+            "invoice_heading":  self.txt_invoice_heading.text().strip(),
             "state":          self.txt_state.text().strip(),
             "jurisdiction":   self.txt_jurisdiction.text().strip(),
             "invoice_prefix": self.txt_prefix.text().strip() or "JB",

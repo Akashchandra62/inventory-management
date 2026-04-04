@@ -2,15 +2,16 @@
 # ui/stock_page.py - Stock Management
 # ============================================================
 
-from PyQt6.QtWidgets import (
+from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QTableWidget, QTableWidgetItem, QMessageBox,
     QDialog, QFormLayout, QDoubleSpinBox, QSpinBox, QComboBox,
     QGroupBox, QFrame, QHeaderView, QAbstractItemView, QScrollArea,
     QCompleter, QDialogButtonBox, QMenu
 )
-from PyQt6.QtCore import Qt, QPoint
-from PyQt6.QtGui import QFont, QAction
+from PyQt5.QtCore import Qt, QPoint
+from PyQt5.QtGui import QFont
+from PyQt5.QtWidgets import QAction
 from services.stock_service import get_all_stock, add_item, update_item, delete_item
 from services.vendor_service import get_all_vendors
 from services.item_catalog_service import get_names as get_catalog_names, ensure_item_exists
@@ -87,8 +88,8 @@ class ManageColumnsDialog(QDialog):
 
         # ── Dialog buttons ─────────────────────────────────────
         btns = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Save |
-            QDialogButtonBox.StandardButton.Cancel
+            QDialogButtonBox.Save |
+            QDialogButtonBox.Cancel
         )
         btns.accepted.connect(self._save)
         btns.rejected.connect(self.reject)
@@ -111,7 +112,7 @@ class ManageColumnsDialog(QDialog):
             row = QHBoxLayout()
             lbl_name = QLabel(col["name"])
             lbl_name.setMinimumWidth(160)
-            lbl_name.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
+            lbl_name.setFont(QFont("Segoe UI", 10, QFont.Bold))
             lbl_type = QLabel(col["type"].upper())
             lbl_type.setStyleSheet(
                 "color:white; background:#2980b9; border-radius:3px;"
@@ -122,7 +123,7 @@ class ManageColumnsDialog(QDialog):
                 " padding:2px 8px; font-size:10px;"
             )
             lbl_type.setFixedWidth(70)
-            lbl_type.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            lbl_type.setAlignment(Qt.AlignCenter)
 
             btn_del = QPushButton("✕ Remove")
             btn_del.setStyleSheet(
@@ -166,9 +167,9 @@ class ManageColumnsDialog(QDialog):
             self, "Remove Column",
             f'Remove column "{col_name}"?\n'
             f'Existing data in this column will be hidden but not deleted.',
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            QMessageBox.Yes | QMessageBox.No
         )
-        if reply == QMessageBox.StandardButton.Yes:
+        if reply == QMessageBox.Yes:
             self._columns.pop(idx)
             self._refresh_col_rows()
 
@@ -198,7 +199,7 @@ class StockDialog(QDialog):
         grp = QGroupBox("Item Details")
         form = QFormLayout(grp)
         form.setSpacing(8)
-        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        form.setLabelAlignment(Qt.AlignRight)
 
         def le(ph=""): e = QLineEdit(); e.setPlaceholderText(ph); e.setMinimumHeight(32); return e
         def dspin(mx=9999999): s = QDoubleSpinBox(); s.setRange(0, mx); s.setDecimals(3); s.setMinimumHeight(32); return s
@@ -206,8 +207,8 @@ class StockDialog(QDialog):
 
         self.txt_name  = le("Item name *")
         _comp = QCompleter(get_catalog_names(), self)
-        _comp.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
-        _comp.setFilterMode(Qt.MatchFlag.MatchStartsWith)
+        _comp.setCaseSensitivity(Qt.CaseInsensitive)
+        _comp.setFilterMode(Qt.MatchStartsWith)
         self.txt_name.setCompleter(_comp)
         _comp.activated.connect(self._on_catalog_selected)
 
@@ -240,7 +241,7 @@ class StockDialog(QDialog):
         # ── Dynamic custom columns ─────────────────────────────
         if self._custom_cols:
             sep = QFrame()
-            sep.setFrameShape(QFrame.Shape.HLine)
+            sep.setFrameShape(QFrame.HLine)
             sep.setStyleSheet("color:#ddd;")
             form.addRow(sep)
             lbl_custom = QLabel("Custom Fields")
@@ -347,7 +348,7 @@ class StockPage(QWidget):
     def _build_ui(self):
         scroll = QScrollArea(self)
         scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setFrameShape(QFrame.NoFrame)
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.addWidget(scroll)
@@ -361,7 +362,7 @@ class StockPage(QWidget):
         # ── Title + buttons ────────────────────────────────────
         top = QHBoxLayout()
         title = QLabel("📦  Stock Management")
-        title.setFont(QFont("Segoe UI", 16, QFont.Weight.Bold))
+        title.setFont(QFont("Segoe UI", 16, QFont.Bold))
 
         btn_add = QPushButton("➕  Add Item")
         btn_add.setStyleSheet("background:#27ae60; color:white; border-radius:4px; padding:8px 16px;")
@@ -389,21 +390,21 @@ class StockPage(QWidget):
 
         # ── Table ──────────────────────────────────────────────
         self.tbl = QTableWidget()
-        self.tbl.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.tbl.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.tbl.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.tbl.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.tbl.setAlternatingRowColors(True)
         self.tbl.setMinimumHeight(380)
         # Double-click a row → open edit dialog
         self.tbl.itemDoubleClicked.connect(lambda _: self._edit())
         # Right-click context menu
-        self.tbl.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.tbl.setContextMenuPolicy(Qt.CustomContextMenu)
         self.tbl.customContextMenuRequested.connect(self._show_context_menu)
         self._root.addWidget(self.tbl)
 
         # hint label
         hint = QLabel("Tip: Double-click a row to edit  |  Right-click for options")
         hint.setStyleSheet("color:#999; font-size:11px;")
-        hint.setAlignment(Qt.AlignmentFlag.AlignRight)
+        hint.setAlignment(Qt.AlignRight)
         self._root.addWidget(hint)
 
         # ── Action buttons ─────────────────────────────────────
@@ -428,7 +429,7 @@ class StockPage(QWidget):
         all_headers = fixed_headers + custom_headers
         self.tbl.setColumnCount(len(all_headers))
         self.tbl.setHorizontalHeaderLabels(all_headers)
-        self.tbl.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self.tbl.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
         self.tbl.setColumnHidden(0, True)
 
     def refresh(self):
@@ -471,13 +472,13 @@ class StockPage(QWidget):
 
             for c, v in enumerate(fixed_vals + custom_vals):
                 cell = QTableWidgetItem(v)
-                cell.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                cell.setTextAlignment(Qt.AlignCenter)
                 # Highlight low-qty in red
                 if c == 6 and item.get("quantity", 1) <= 2:
-                    cell.setForeground(Qt.GlobalColor.red)
+                    cell.setForeground(Qt.red)
                 # Tint custom column cells lightly
                 if c >= FIXED_COLS:
-                    cell.setBackground(Qt.GlobalColor.white)
+                    cell.setBackground(Qt.white)
                 self.tbl.setItem(r, c, cell)
 
         self.tbl.setColumnHidden(0, True)
@@ -499,13 +500,13 @@ class StockPage(QWidget):
 
     def _manage_columns(self):
         dlg = ManageColumnsDialog(self)
-        if dlg.exec() == QDialog.DialogCode.Accepted:
+        if dlg.exec() == QDialog.Accepted:
             # Reload table with updated columns
             self.refresh()
 
     def _add(self):
         dlg = StockDialog(self)
-        if dlg.exec() == QDialog.DialogCode.Accepted:
+        if dlg.exec() == QDialog.Accepted:
             s = StockModel(**{
                 k: v for k, v in dlg.result_data.items()
                 if k in StockModel.__dataclass_fields__
@@ -530,7 +531,7 @@ class StockPage(QWidget):
         if not item:
             return
         dlg = StockDialog(self, item=item)
-        if dlg.exec() == QDialog.DialogCode.Accepted:
+        if dlg.exec() == QDialog.Accepted:
             update_item(item_id, dlg.result_data)
             self.refresh()
 
@@ -543,8 +544,8 @@ class StockPage(QWidget):
         name    = self.tbl.item(row, 1).text()
         reply = QMessageBox.question(
             self, "Delete", f"Delete '{name}'?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            QMessageBox.Yes | QMessageBox.No
         )
-        if reply == QMessageBox.StandardButton.Yes:
+        if reply == QMessageBox.Yes:
             delete_item(item_id)
             self.refresh()

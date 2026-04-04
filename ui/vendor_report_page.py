@@ -1,11 +1,11 @@
 # ui/vendor_report_page.py
-from PyQt6.QtWidgets import (
+from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QTableWidget, QTableWidgetItem, QFrame,
     QHeaderView, QAbstractItemView, QScrollArea, QSplitter
 )
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QFont
+from PyQt5.QtCore import Qt
+from PyQt5.QtGui import QFont
 from services.vendor_service import get_all_vendors
 from services.stock_service import get_all_stock
 
@@ -16,12 +16,12 @@ class VendorReportPage(QWidget):
         self._build_ui()
 
     def _build_ui(self):
-        scroll = QScrollArea(self); scroll.setWidgetResizable(True); scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll = QScrollArea(self); scroll.setWidgetResizable(True); scroll.setFrameShape(QFrame.NoFrame)
         outer = QVBoxLayout(self); outer.setContentsMargins(0,0,0,0); outer.addWidget(scroll)
         container = QWidget(); scroll.setWidget(container)
         root = QVBoxLayout(container); root.setContentsMargins(25,20,25,20); root.setSpacing(14)
 
-        title = QLabel("📑  Vendor Report"); title.setFont(QFont("Segoe UI",16,QFont.Weight.Bold))
+        title = QLabel("📑  Vendor Report"); title.setFont(QFont("Segoe UI",16,QFont.Bold))
         root.addWidget(title)
 
         sr = QHBoxLayout()
@@ -33,8 +33,8 @@ class VendorReportPage(QWidget):
         root.addWidget(vlbl)
         self.tbl_v = QTableWidget(); self.tbl_v.setColumnCount(5)
         self.tbl_v.setHorizontalHeaderLabels(["Name","Phone","Address","GST","Email"])
-        self.tbl_v.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        self.tbl_v.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.tbl_v.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.tbl_v.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.tbl_v.setAlternatingRowColors(True); self.tbl_v.setMaximumHeight(220)
         self.tbl_v.selectionModel().selectionChanged.connect(self._vendor_selected)
         root.addWidget(self.tbl_v)
@@ -44,8 +44,8 @@ class VendorReportPage(QWidget):
         root.addWidget(slbl)
         self.tbl_s = QTableWidget(); self.tbl_s.setColumnCount(6)
         self.tbl_s.setHorizontalHeaderLabels(["Item","Category","Purity","Net(g)","Qty","Sell Price"])
-        self.tbl_s.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        self.tbl_s.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.tbl_s.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.tbl_s.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.tbl_s.setAlternatingRowColors(True); self.tbl_s.setMinimumHeight(180)
         root.addWidget(self.tbl_s)
         self._all_v = []; self._all_s = []
@@ -63,7 +63,7 @@ class VendorReportPage(QWidget):
         for v in data:
             r = self.tbl_v.rowCount(); self.tbl_v.insertRow(r)
             for c, key in enumerate(["vendor_name","phone","address","gst_number","email"]):
-                cell = QTableWidgetItem(str(v.get(key,""))); cell.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                cell = QTableWidgetItem(str(v.get(key,""))); cell.setTextAlignment(Qt.AlignCenter)
                 self.tbl_v.setItem(r,c,cell)
 
     def _vendor_selected(self):
@@ -78,5 +78,5 @@ class VendorReportPage(QWidget):
             vals = [s.get("item_name",""),s.get("category",""),s.get("purity",""),
                     str(s.get("net_weight","")),str(s.get("quantity","")),format_currency(s.get("selling_price",0))]
             for c,v in enumerate(vals):
-                cell = QTableWidgetItem(v); cell.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                cell = QTableWidgetItem(v); cell.setTextAlignment(Qt.AlignCenter)
                 self.tbl_s.setItem(r,c,cell)

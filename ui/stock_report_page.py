@@ -1,12 +1,12 @@
 # ui/stock_report_page.py
-from PyQt6.QtWidgets import (
+from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QTableWidget, QTableWidgetItem, QFrame,
     QHeaderView, QAbstractItemView, QScrollArea, QComboBox,
     QDoubleSpinBox
 )
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QFont
+from PyQt5.QtCore import Qt
+from PyQt5.QtGui import QFont
 from services.stock_service import get_all_stock, get_low_stock
 from app.utils import format_currency
 from app.config import AppConfig
@@ -22,7 +22,7 @@ class StockReportPage(QWidget):
     def _build_ui(self):
         scroll = QScrollArea(self)
         scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setFrameShape(QFrame.NoFrame)
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.addWidget(scroll)
@@ -34,7 +34,7 @@ class StockReportPage(QWidget):
         root.setSpacing(14)
 
         title = QLabel("📈  Stock Report")
-        title.setFont(QFont("Segoe UI", 16, QFont.Weight.Bold))
+        title.setFont(QFont("Segoe UI", 16, QFont.Bold))
         root.addWidget(title)
 
         # Filter row
@@ -86,8 +86,8 @@ class StockReportPage(QWidget):
         self.tbl = QTableWidget()
         self.tbl.setColumnCount(9)
         self.tbl.setHorizontalHeaderLabels(["Item", "Category", "Purity", "Gross(g)", "Net(g)", "Qty", "Buy Price", "Sell Price", "Vendor"])
-        self.tbl.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        self.tbl.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.tbl.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.tbl.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.tbl.setAlternatingRowColors(True)
         self.tbl.setMinimumHeight(360)
         root.addWidget(self.tbl)
@@ -99,7 +99,7 @@ class StockReportPage(QWidget):
         self.lbl_items = QLabel("Items: 0")
         self.lbl_val   = QLabel("Stock Value: ₹ 0.00")
         for l in (self.lbl_items, self.lbl_val):
-            l.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold)); l.setStyleSheet("background:transparent; color:#2c3e50;")
+            l.setFont(QFont("Segoe UI", 12, QFont.Bold)); l.setStyleSheet("background:transparent; color:#2c3e50;")
         sl.addWidget(self.lbl_items); sl.addStretch(); sl.addWidget(self.lbl_val)
         root.addWidget(sf)
 
@@ -165,21 +165,21 @@ class StockReportPage(QWidget):
             ]
             for c, v in enumerate(vals):
                 cell = QTableWidgetItem(v)
-                cell.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                cell.setTextAlignment(Qt.AlignCenter)
                 if c == 5 and qty <= 2:
-                    cell.setForeground(Qt.GlobalColor.red)
+                    cell.setForeground(Qt.red)
                 self.tbl.setItem(r, c, cell)
         self.lbl_items.setText(f"Items: {len(data)}")
         self.lbl_val.setText(f"Stock Value: {format_currency(total_val)}")
 
     def _export(self):
-        if not self._all:
+        if not self._all_stock:
             return
-        from PyQt6.QtWidgets import QFileDialog
+        from PyQt5.QtWidgets import QFileDialog
         path, _ = QFileDialog.getSaveFileName(self, "Export", f"stock_report_{date.today()}.csv", "CSV (*.csv)")
         if not path: return
         with open(path, "w", newline="", encoding="utf-8") as f:
             w = csv.DictWriter(f, fieldnames=["item_name","category","purity","gross_weight","net_weight","quantity","purchase_price","selling_price","vendor_name"])
             w.writeheader(); [w.writerow({k: s.get(k,"") for k in w.fieldnames}) for s in self._all]
-        from PyQt6.QtWidgets import QMessageBox
+        from PyQt5.QtWidgets import QMessageBox
         QMessageBox.information(self, "Export", f"Saved to:\n{path}")

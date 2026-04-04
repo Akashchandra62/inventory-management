@@ -2,14 +2,14 @@
 # ui/sales_report_page.py - Sales Report / Invoice History
 # ============================================================
 
-from PyQt6.QtWidgets import (
+from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QTableWidget, QTableWidgetItem,
     QLineEdit, QDateEdit, QGroupBox, QFrame,
     QHeaderView, QAbstractItemView, QMessageBox, QScrollArea
 )
-from PyQt6.QtCore import Qt, QDate
-from PyQt6.QtGui import QFont
+from PyQt5.QtCore import Qt, QDate
+from PyQt5.QtGui import QFont
 from services.invoice_service import filter_invoices, get_all_invoices
 from app.utils import format_currency
 from app.printer_helper import save_invoice_as_pdf
@@ -26,7 +26,7 @@ class SalesReportPage(QWidget):
     def _build_ui(self):
         scroll = QScrollArea(self)
         scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setFrameShape(QFrame.NoFrame)
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.addWidget(scroll)
@@ -39,7 +39,7 @@ class SalesReportPage(QWidget):
 
         page_title = "📋  Invoice History" if self.history_mode else "📊  Sales Report"
         title = QLabel(page_title)
-        title.setFont(QFont("Segoe UI", 16, QFont.Weight.Bold))
+        title.setFont(QFont("Segoe UI", 16, QFont.Bold))
         root.addWidget(title)
 
         # ── Filters ───────────────────────────────────────────
@@ -98,10 +98,10 @@ class SalesReportPage(QWidget):
             "Invoice No", "Date", "Time",
             "Customer", "Mobile", "Subtotal", "Tax", "Grand Total", "Action"
         ])
-        self.tbl.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+        self.tbl.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
         self.tbl.verticalHeader().setDefaultSectionSize(42)
-        self.tbl.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.tbl.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.tbl.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.tbl.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.tbl.setAlternatingRowColors(True)
         self.tbl.setMinimumHeight(320)
         self.tbl.doubleClicked.connect(self._view_invoice)
@@ -115,7 +115,7 @@ class SalesReportPage(QWidget):
         self.lbl_total  = QLabel("Total Sales: ₹ 0.00")
         self.lbl_tax    = QLabel("Total Tax: ₹ 0.00")
         for lbl in (self.lbl_count, self.lbl_total, self.lbl_tax):
-            lbl.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
+            lbl.setFont(QFont("Segoe UI", 12, QFont.Bold))
             lbl.setStyleSheet("color: #2c3e50; background: transparent;")
         sl.addWidget(self.lbl_count)
         sl.addStretch()
@@ -193,7 +193,7 @@ class SalesReportPage(QWidget):
             ]
             for c, v in enumerate(vals):
                 cell = QTableWidgetItem(v)
-                cell.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                cell.setTextAlignment(Qt.AlignCenter)
                 self.tbl.setItem(r, c, cell)
 
             # Action button
@@ -204,7 +204,7 @@ class SalesReportPage(QWidget):
             btn_container = QWidget()
             btn_layout = QHBoxLayout(btn_container)
             btn_layout.setContentsMargins(0, 0, 0, 0)
-            btn_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            btn_layout.setAlignment(Qt.AlignCenter)
             btn_layout.addWidget(btn_dl)
             self.tbl.setCellWidget(r, 8, btn_container)
 
@@ -236,7 +236,7 @@ class SalesReportPage(QWidget):
         if not self._data:
             QMessageBox.information(self, "Export", "No data to export.")
             return
-        from PyQt6.QtWidgets import QFileDialog
+        from PyQt5.QtWidgets import QFileDialog
         path, _ = QFileDialog.getSaveFileName(
             self, "Save CSV", f"sales_report_{date.today()}.csv", "CSV Files (*.csv)"
         )

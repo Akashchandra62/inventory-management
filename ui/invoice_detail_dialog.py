@@ -7,7 +7,7 @@
 import os
 import traceback
 
-from PyQt6.QtWidgets import QMessageBox, QFileDialog
+from PyQt5.QtWidgets import QMessageBox, QFileDialog
 from app.config import AppConfig
 from app.utils import format_currency
 from app.constants import LOGO_FILE, QR_FILE
@@ -384,17 +384,17 @@ def _generate_pdf(invoice: dict, path: str):
 # ── Print via Qt (fallback to PDF) ───────────────────────────
 def print_invoice(invoice: dict, parent=None, preview=True):
     try:
-        from PyQt6.QtPrintSupport import QPrinter, QPrintPreviewDialog, QPrintDialog
-        from PyQt6.QtGui import QTextDocument, QPageSize
-        from PyQt6.QtCore import QSizeF
+        from PyQt5.QtPrintSupport import QPrinter, QPrintPreviewDialog, QPrintDialog
+        from PyQt5.QtGui import QTextDocument
+        from PyQt5.QtCore import QSizeF
 
         html = _build_html_preview(invoice)
         doc  = QTextDocument()
         doc.setHtml(html)
         doc.setPageSize(QSizeF(595, 842))
 
-        printer = QPrinter(QPrinter.PrinterMode.HighResolution)
-        printer.setPageSize(QPageSize(QPageSize.PageSizeId.A4))
+        printer = QPrinter(QPrinter.HighResolution)
+        printer.setPageSize(QPrinter.A4)
 
         if preview:
             dialog = QPrintPreviewDialog(printer, parent)
@@ -403,7 +403,7 @@ def print_invoice(invoice: dict, parent=None, preview=True):
             dialog.exec()
         else:
             dialog = QPrintDialog(printer, parent)
-            if dialog.exec() == QPrintDialog.DialogCode.Accepted:
+            if dialog.exec() == QPrintDialog.Accepted:
                 doc.print(printer)
 
     except Exception:
@@ -411,9 +411,9 @@ def print_invoice(invoice: dict, parent=None, preview=True):
         reply = QMessageBox.question(
             parent, "Printer Not Available",
             "Could not open print dialog.\nSave as PDF instead?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            QMessageBox.Yes | QMessageBox.No
         )
-        if reply == QMessageBox.StandardButton.Yes:
+        if reply == QMessageBox.Yes:
             save_invoice_as_pdf(invoice, parent)
 
 

@@ -1,12 +1,12 @@
 # ui/vendor_page.py
-from PyQt6.QtWidgets import (
+from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QTableWidget, QTableWidgetItem, QMessageBox,
     QDialog, QFormLayout, QGroupBox, QFrame, QHeaderView,
     QAbstractItemView, QScrollArea, QTextEdit
 )
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QFont
+from PyQt5.QtCore import Qt
+from PyQt5.QtGui import QFont
 from services.vendor_service import get_all_vendors, add_vendor, update_vendor, delete_vendor
 from models.vendor_model import VendorModel
 
@@ -23,7 +23,7 @@ class VendorDialog(QDialog):
     def _build_ui(self):
         root = QVBoxLayout(self); root.setContentsMargins(20,20,20,20); root.setSpacing(12)
         grp = QGroupBox("Vendor Details")
-        form = QFormLayout(grp); form.setSpacing(8); form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        form = QFormLayout(grp); form.setSpacing(8); form.setLabelAlignment(Qt.AlignRight)
 
         def le(ph=""): e = QLineEdit(); e.setPlaceholderText(ph); e.setMinimumHeight(32); return e
         self.txt_name  = le("Vendor/company name *")
@@ -74,13 +74,13 @@ class VendorPage(QWidget):
         self._build_ui()
 
     def _build_ui(self):
-        scroll = QScrollArea(self); scroll.setWidgetResizable(True); scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll = QScrollArea(self); scroll.setWidgetResizable(True); scroll.setFrameShape(QFrame.NoFrame)
         outer = QVBoxLayout(self); outer.setContentsMargins(0,0,0,0); outer.addWidget(scroll)
         container = QWidget(); scroll.setWidget(container)
         root = QVBoxLayout(container); root.setContentsMargins(25,20,25,20); root.setSpacing(14)
 
         top = QHBoxLayout()
-        title = QLabel("🏪  Vendor Management"); title.setFont(QFont("Segoe UI",16,QFont.Weight.Bold))
+        title = QLabel("🏪  Vendor Management"); title.setFont(QFont("Segoe UI",16,QFont.Bold))
         btn_add = QPushButton("➕  Add Vendor"); btn_add.setStyleSheet("background:#27ae60;color:white;border-radius:4px;padding:8px 16px;"); btn_add.clicked.connect(self._add)
         top.addWidget(title); top.addStretch(); top.addWidget(btn_add); root.addLayout(top)
 
@@ -90,9 +90,9 @@ class VendorPage(QWidget):
 
         self.tbl = QTableWidget(); self.tbl.setColumnCount(7)
         self.tbl.setHorizontalHeaderLabels(["ID","Name","Phone","Address","GST","Email","Notes"])
-        self.tbl.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        self.tbl.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.tbl.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.tbl.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.tbl.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.tbl.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.tbl.setAlternatingRowColors(True); self.tbl.setMinimumHeight(360)
         root.addWidget(self.tbl)
 
@@ -114,13 +114,13 @@ class VendorPage(QWidget):
         for v in data:
             r = self.tbl.rowCount(); self.tbl.insertRow(r)
             for c, key in enumerate(["vendor_id","vendor_name","phone","address","gst_number","email","notes"]):
-                cell = QTableWidgetItem(str(v.get(key,""))); cell.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                cell = QTableWidgetItem(str(v.get(key,""))); cell.setTextAlignment(Qt.AlignCenter)
                 self.tbl.setItem(r,c,cell)
         self.tbl.setColumnHidden(0,True)
 
     def _add(self):
         dlg = VendorDialog(self)
-        if dlg.exec() == QDialog.DialogCode.Accepted:
+        if dlg.exec() == QDialog.Accepted:
             add_vendor(VendorModel(**dlg.result_data)); self.refresh()
 
     def _edit(self):
@@ -130,7 +130,7 @@ class VendorPage(QWidget):
         v   = next((x for x in self._all if x.get("vendor_id")==vid), None)
         if not v: return
         dlg = VendorDialog(self, vendor=v)
-        if dlg.exec() == QDialog.DialogCode.Accepted:
+        if dlg.exec() == QDialog.Accepted:
             update_vendor(vid, dlg.result_data); self.refresh()
 
     def _delete(self):
@@ -139,5 +139,5 @@ class VendorPage(QWidget):
         vid  = self.tbl.item(row,0).text()
         name = self.tbl.item(row,1).text()
         if QMessageBox.question(self,"Delete",f"Delete vendor '{name}'?",
-                                QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes:
+                                QMessageBox.Yes|QMessageBox.No) == QMessageBox.Yes:
             delete_vendor(vid); self.refresh()

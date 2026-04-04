@@ -1,11 +1,11 @@
 # ui/customer_page.py
-from PyQt6.QtWidgets import (
+from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QTableWidget, QTableWidgetItem, QMessageBox,
     QFrame, QHeaderView, QAbstractItemView, QScrollArea
 )
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QFont
+from PyQt5.QtCore import Qt
+from PyQt5.QtGui import QFont
 from services.customer_service import get_all_customers, delete_customer
 from services.invoice_service import get_all_invoices
 from app.utils import format_currency
@@ -18,12 +18,12 @@ class CustomerPage(QWidget):
         self._build_ui()
 
     def _build_ui(self):
-        scroll = QScrollArea(self); scroll.setWidgetResizable(True); scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll = QScrollArea(self); scroll.setWidgetResizable(True); scroll.setFrameShape(QFrame.NoFrame)
         outer = QVBoxLayout(self); outer.setContentsMargins(0,0,0,0); outer.addWidget(scroll)
         container = QWidget(); scroll.setWidget(container)
         root = QVBoxLayout(container); root.setContentsMargins(25,20,25,20); root.setSpacing(14)
 
-        title = QLabel("👥  Customer Management"); title.setFont(QFont("Segoe UI",16,QFont.Weight.Bold))
+        title = QLabel("👥  Customer Management"); title.setFont(QFont("Segoe UI",16,QFont.Bold))
         root.addWidget(title)
 
         sr = QHBoxLayout()
@@ -35,10 +35,10 @@ class CustomerPage(QWidget):
         root.addWidget(clbl)
         self.tbl_c = QTableWidget(); self.tbl_c.setColumnCount(5)
         self.tbl_c.setHorizontalHeaderLabels(["ID","Name","Mobile","Address","Email"])
-        self.tbl_c.horizontalHeader().setSectionResizeMode(1,QHeaderView.ResizeMode.Stretch)
+        self.tbl_c.horizontalHeader().setSectionResizeMode(1,QHeaderView.Stretch)
         self.tbl_c.verticalHeader().setDefaultSectionSize(42)
-        self.tbl_c.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.tbl_c.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.tbl_c.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.tbl_c.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.tbl_c.setAlternatingRowColors(True); self.tbl_c.setMaximumHeight(240)
         self.tbl_c.selectionModel().selectionChanged.connect(self._customer_selected)
         root.addWidget(self.tbl_c)
@@ -52,9 +52,9 @@ class CustomerPage(QWidget):
         root.addWidget(ilbl)
         self.tbl_i = QTableWidget(); self.tbl_i.setColumnCount(6)
         self.tbl_i.setHorizontalHeaderLabels(["Invoice No","Date","Items","Tax","Grand Total", "Action"])
-        self.tbl_i.horizontalHeader().setSectionResizeMode(0,QHeaderView.ResizeMode.Stretch)
+        self.tbl_i.horizontalHeader().setSectionResizeMode(0,QHeaderView.Stretch)
         self.tbl_i.verticalHeader().setDefaultSectionSize(42)
-        self.tbl_i.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.tbl_i.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.tbl_i.setAlternatingRowColors(True); self.tbl_i.setMinimumHeight(180)
         root.addWidget(self.tbl_i)
 
@@ -74,7 +74,7 @@ class CustomerPage(QWidget):
         for c in data:
             r = self.tbl_c.rowCount(); self.tbl_c.insertRow(r)
             for col, key in enumerate(["customer_id","customer_name","mobile","address","email"]):
-                cell = QTableWidgetItem(str(c.get(key,""))); cell.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                cell = QTableWidgetItem(str(c.get(key,""))); cell.setTextAlignment(Qt.AlignCenter)
                 self.tbl_c.setItem(r,col,cell)
         self.tbl_c.setColumnHidden(0,True)
 
@@ -94,13 +94,13 @@ class CustomerPage(QWidget):
                     format_currency(inv.get("tax_amount",0)),
                     format_currency(inv.get("grand_total",0))]
             for c, v in enumerate(vals):
-                cell = QTableWidgetItem(v); cell.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                cell = QTableWidgetItem(v); cell.setTextAlignment(Qt.AlignCenter)
                 self.tbl_i.setItem(r,c,cell)
                 
             btn_dl = QPushButton("Download")
             btn_dl.setStyleSheet("background:#27ae60; color:white; padding: 4px 8px; border-radius:3px; font-weight:bold; font-size:11px;")
             btn_dl.clicked.connect(lambda checked, i=inv: save_invoice_as_pdf(i, parent=self))
-            btn_container = QWidget(); bl = QHBoxLayout(btn_container); bl.setContentsMargins(0,0,0,0); bl.setAlignment(Qt.AlignmentFlag.AlignCenter); bl.addWidget(btn_dl)
+            btn_container = QWidget(); bl = QHBoxLayout(btn_container); bl.setContentsMargins(0,0,0,0); bl.setAlignment(Qt.AlignCenter); bl.addWidget(btn_dl)
             self.tbl_i.setCellWidget(r, 5, btn_container)
 
     def _delete(self):
@@ -109,5 +109,5 @@ class CustomerPage(QWidget):
         cid  = self.tbl_c.item(row,0).text()
         name = self.tbl_c.item(row,1).text()
         if QMessageBox.question(self,"Delete",f"Delete customer '{name}'?",
-                                QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes:
+                                QMessageBox.Yes|QMessageBox.No) == QMessageBox.Yes:
             delete_customer(cid); self.refresh()

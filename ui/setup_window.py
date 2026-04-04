@@ -2,13 +2,13 @@
 # ui/setup_window.py - First-Time Shop Setup
 # ============================================================
 
-from PyQt6.QtWidgets import (
+from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel,
     QLineEdit, QDoubleSpinBox, QPushButton,
     QFormLayout, QGroupBox, QMessageBox, QFrame
 )
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QFont
+from PyQt5.QtCore import Qt
+from PyQt5.QtGui import QFont
 from app.config import AppConfig
 from app.utils import safe_float
 
@@ -30,7 +30,7 @@ class SetupWindow(QDialog):
 
         # Header
         hdr = QLabel("💎  Welcome to Jewelry Billing System")
-        hdr.setFont(QFont("Segoe UI", 15, QFont.Weight.Bold))
+        hdr.setFont(QFont("Segoe UI", 15, QFont.Bold))
         hdr.setStyleSheet("color: #2c3e50;")
         sub = QLabel("Please enter your shop details to get started.")
         sub.setStyleSheet("color: #7f8c8d; font-size: 12px;")
@@ -40,7 +40,7 @@ class SetupWindow(QDialog):
         # Form
         grp = QGroupBox("Shop Information")
         form = QFormLayout(grp)
-        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        form.setLabelAlignment(Qt.AlignRight)
         form.setSpacing(10)
 
         def field(placeholder=""):

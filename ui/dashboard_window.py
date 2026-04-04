@@ -2,14 +2,14 @@
 # ui/dashboard_window.py - Main Application Shell
 # ============================================================
 
-from PyQt6.QtWidgets import (
+from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
     QLabel, QPushButton, QStackedWidget, QFrame,
     QMessageBox, QSizePolicy
 )
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt5.QtCore import Qt, pyqtSignal
 import os
-from PyQt6.QtGui import QFont, QPixmap
+from PyQt5.QtGui import QFont, QPixmap
 from app.constants import APP_NAME, APP_VERSION, LOGO_FILE
 from app.config import AppConfig
 
@@ -78,7 +78,7 @@ class DashboardWindow(QMainWindow):
         self._gem.setStyleSheet("color: #f39c12; background: transparent;")
         self._app_lbl = QLabel(APP_NAME)
         self._app_lbl.setObjectName("logo_label")
-        self._app_lbl.setFont(QFont("Segoe UI", 11, QFont.Weight.Bold))
+        self._app_lbl.setFont(QFont("Segoe UI", 11, QFont.Bold))
         self._app_lbl.setStyleSheet("color: #f39c12; background: transparent;")
         self._app_lbl.setWordWrap(True)
         ver_lbl = QLabel(f"v{APP_VERSION}")
@@ -175,9 +175,9 @@ class DashboardWindow(QMainWindow):
         reply = QMessageBox.question(
             self, "Logout",
             "Are you sure you want to logout?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            QMessageBox.Yes | QMessageBox.No
         )
-        if reply == QMessageBox.StandardButton.Yes:
+        if reply == QMessageBox.Yes:
             self.logout_requested.emit()
 
     def refresh_shop_label(self):
@@ -189,8 +189,8 @@ class DashboardWindow(QMainWindow):
         if os.path.exists(LOGO_FILE):
             pix = QPixmap(LOGO_FILE).scaled(
                 64, 64,
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation
+                Qt.KeepAspectRatio,
+                Qt.SmoothTransformation
             )
             self._gem.setPixmap(pix)
             self._gem.setText("")

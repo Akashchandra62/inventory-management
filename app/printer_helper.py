@@ -4,12 +4,53 @@
 # ============================================================
 
 import os
+import tempfile
 import traceback
 
-from PyQt6.QtWidgets import QMessageBox, QFileDialog
+from PyQt5.QtWidgets import QMessageBox, QFileDialog
 from app.config import AppConfig
 from app.utils import format_currency
 from app.constants import LOGO_FILE, QR_FILE
+
+
+def _qt_render(text: str, font_pt: int = 9, dpi: int = 300):
+    """
+    Render text using Qt's shaping engine so complex scripts (Devanagari, etc.)
+    form correct conjunct ligatures — identical to what the user sees in the UI.
+    Returns (tmp_png_path, width_mm, height_mm) or None on failure.
+    """
+    try:
+        from PyQt5.QtGui import QPixmap, QPainter, QFont, QFontMetrics, QColor
+        from PyQt5.QtCore import Qt
+
+        px_per_pt = dpi / 72.0
+        font = QFont("Nirmala UI")
+        font.setPixelSize(max(int(font_pt * px_per_pt), 1))
+
+        fm = QFontMetrics(font)
+        br = fm.boundingRect(text)
+        w  = max(br.width() + 12, 1)
+        h  = max(fm.height() + 6, 1)
+
+        pix = QPixmap(w, h)
+        pix.fill(Qt.transparent)
+
+        painter = QPainter(pix)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setRenderHint(QPainter.TextAntialiasing)
+        painter.setFont(font)
+        painter.setPen(QColor(0, 0, 0))
+        painter.drawText(6, fm.ascent() + 3, text)
+        painter.end()
+
+        path = tempfile.mktemp(suffix='.png')
+        pix.save(path, 'PNG')
+
+        w_mm = w / dpi * 25.4
+        h_mm = h / dpi * 25.4
+        return path, w_mm, h_mm
+    except Exception:
+        return None
 
 
 # ── Amount in Words ──────────────────────────────────────────
@@ -99,6 +140,8 @@ def _make_bis_box(size: float, bc):
 
 # ── Core PDF builder ─────────────────────────────────────────
 def _generate_pdf(invoice: dict, path: str):
+    _tmp_files = []   # temp PNGs rendered via Qt — cleaned up after build
+
     from reportlab.lib.pagesizes import A4
     from reportlab.lib import colors
     from reportlab.lib.units import mm
@@ -108,6 +151,20 @@ def _generate_pdf(invoice: dict, path: str):
     )
     from reportlab.lib.styles import ParagraphStyle
     from reportlab.lib.enums import TA_CENTER, TA_RIGHT, TA_LEFT
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+
+    # Register Nirmala UI for Hindi / Devanagari rendering
+    _HINDI_FONT      = 'Helvetica'
+    _HINDI_FONT_BOLD = 'Helvetica-Bold'
+    try:
+        _nirmala_path = r'C:\Windows\Fonts\Nirmala.ttc'
+        pdfmetrics.registerFont(TTFont('NirmalaUI',     _nirmala_path, subfontIndex=0))
+        pdfmetrics.registerFont(TTFont('NirmalaUI-Bd',  _nirmala_path, subfontIndex=1))
+        _HINDI_FONT      = 'NirmalaUI'
+        _HINDI_FONT_BOLD = 'NirmalaUI-Bd'
+    except Exception:
+        pass   # fall back to Helvetica (Hindi won't render but won't crash)
 
     BLACK = colors.black
     LGRAY = colors.HexColor('#f5f5f5')   # table header bg
@@ -116,11 +173,12 @@ def _generate_pdf(invoice: dict, path: str):
 
     # ── Shop data ─────────────────────────────────────────────
     shop         = AppConfig.shop()
-    shop_name    = shop.get("shop_name",    "Jewellers")
-    tagline      = shop.get("tagline",      "")
-    address      = shop.get("address",      "")
-    mobile       = shop.get("mobile",       "")
-    mobile2      = shop.get("mobile2",      "")
+    shop_name        = shop.get("shop_name",        "Jewellers")
+    tagline          = shop.get("tagline",          "")
+    address          = shop.get("address",          "")
+    mobile           = shop.get("mobile",           "")
+    mobile2          = shop.get("mobile2",          "")
+    invoice_heading  = shop.get("invoice_heading",  "")
     gst_number   = shop.get("gst_number",   "")
     state        = shop.get("state",        "")
     state_code   = shop.get("state_code",   "")
@@ -160,10 +218,13 @@ def _generate_pdf(invoice: dict, path: str):
     # ── Style factory (unique names avoid any caching clash) ──
     _n = [0]
     def _ps(size=8, bold=False, italic=False, align=TA_LEFT,
-            color=BLACK, leading=None):
+            color=BLACK, leading=None, fontName=None):
         _n[0] += 1
-        fn = ('Helvetica-Bold'    if bold   else
-              'Helvetica-Oblique' if italic else 'Helvetica')
+        if fontName:
+            fn = fontName
+        else:
+            fn = ('Helvetica-Bold'    if bold   else
+                  'Helvetica-Oblique' if italic else 'Helvetica')
         kw = dict(fontSize=size, fontName=fn,
                   alignment=align, textColor=color)
         if leading:
@@ -171,10 +232,11 @@ def _generate_pdf(invoice: dict, path: str):
         return ParagraphStyle(f'_s{_n[0]}', **kw)
 
     def P(txt, size=8, bold=False, italic=False,
-          align=TA_LEFT, color=BLACK, leading=None):
+          align=TA_LEFT, color=BLACK, leading=None, fontName=None):
         return Paragraph(str(txt),
                          _ps(size=size, bold=bold, italic=italic,
-                             align=align, color=color, leading=leading))
+                             align=align, color=color, leading=leading,
+                             fontName=fontName))
 
     def TH(txt):
         """Table header cell."""
@@ -213,10 +275,20 @@ def _generate_pdf(invoice: dict, path: str):
     if mobile2:
         mob_str += f"<br/>{mobile2}"
 
+    # Render invoice heading via Qt so Devanagari conjuncts match the settings field exactly
+    if invoice_heading.strip():
+        _qt = _qt_render(invoice_heading.strip(), font_pt=9, dpi=300)
+        if _qt:
+            _tmp_files.append(_qt[0])
+            heading_cell = RLImage(_qt[0], width=_qt[1] * mm, height=_qt[2] * mm)
+        else:
+            heading_cell = P(invoice_heading, size=9, align=TA_CENTER, fontName=_HINDI_FONT)
+    else:
+        heading_cell = P('', size=9)
+
     top_bar = Table(
         [[P(f"GSTIN :- {gst_number}", size=8),
-          P("\u0936\u094d\u0930\u0940 \u0917\u0923\u0947\u0936\u093e\u092f \u0928\u092e\u0903",
-            size=8, align=TA_CENTER),
+          heading_cell,
           P(mob_str, size=8, align=TA_RIGHT)]],
         colWidths=[UW * 0.38, UW * 0.24, UW * 0.38]
     )
@@ -435,8 +507,8 @@ def _generate_pdf(invoice: dict, path: str):
     # ══════════════════════════════════════════════════════════
     # 6. BOTTOM  — Payment/Words/Bank  |  Totals + Signature
     # ══════════════════════════════════════════════════════════
-    LW = UW * 0.60      # left column  ≈ 114 mm
-    RW = UW - LW        # right column ≈  76 mm
+    LW = UW * 0.55      # left column  ≈ 104 mm
+    RW = UW - LW        # right column ≈  86 mm
 
     # ── Left: Payment Detail ──────────────────────────────────
     total_paid = upi_paid + cash_paid
@@ -453,7 +525,7 @@ def _generate_pdf(invoice: dict, path: str):
     pay_data.append([P("<b>TOTAL PAYMENT -</b>", size=8),
                      P(f"{total_paid:,.0f} /-", size=8, align=TA_RIGHT)])
 
-    pay_inner = Table(pay_data, colWidths=[LW * 0.55, LW * 0.45])
+    pay_inner = Table(pay_data, colWidths=[LW * 0.58, LW * 0.42])
     pay_inner.setStyle(TableStyle([
         ('SPAN',          (0, 0), (-1, 0)),
         ('TOPPADDING',    (0, 0), (-1, -1), 2),
@@ -538,14 +610,16 @@ def _generate_pdf(invoice: dict, path: str):
         [sig_p, '', ''],
     ]
 
-    r1, r2, r3 = RW * 0.52, RW * 0.08, RW * 0.40
+    r1, r2, r3 = RW * 0.48, RW * 0.06, RW * 0.46
     right_bottom = Table(sum_rows, colWidths=[r1, r2, r3])
     right_bottom.setStyle(TableStyle([
         ('VALIGN',        (0, 0), (-1, -1), 'MIDDLE'),
         ('TOPPADDING',    (0, 0), (-1, -1), 3),
         ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
-        ('LEFTPADDING',   (0, 0), (-1, -1), 4),
-        ('RIGHTPADDING',  (0, 0), (-1, -1), 4),
+        ('LEFTPADDING',   (0, 0), (-1, -1), 3),
+        ('RIGHTPADDING',  (0, 0), (-1, -1), 2),
+        # value column: minimal right padding so numbers don't get clipped
+        ('RIGHTPADDING',  (2, 0), (2, -1), 4),
         ('LINEBELOW',     (0, 0), (-1,  4), 0.5, BLACK),
         # Net Payable row (index 5) — gray bg, thick top border
         ('BACKGROUND',    (0, 5), (-1,  5), DGRAY),
@@ -592,7 +666,7 @@ def _generate_pdf(invoice: dict, path: str):
         for j, line in enumerate(terms_text.split('\n'), 1):
             if line.strip():
                 term_rows.append([P(f"{j}.", size=8, align=TA_RIGHT),
-                                   P(line.strip(), size=8)])
+                                   P(line.strip(), size=8, fontName=_HINDI_FONT)])
         if term_rows:
             tl = Table(term_rows, colWidths=[8 * mm, UW - 10 * mm])
             tl.setStyle(TableStyle([
@@ -647,21 +721,28 @@ def _generate_pdf(invoice: dict, path: str):
     )
     doc.build(story, onFirstPage=on_page, onLaterPages=on_page)
 
+    # Remove temporary Qt-rendered PNG files
+    for _f in _tmp_files:
+        try:
+            os.remove(_f)
+        except Exception:
+            pass
+
 
 # ── Print via Qt (preview or direct) ─────────────────────────
 def print_invoice(invoice: dict, parent=None, preview=True):
     try:
-        from PyQt6.QtPrintSupport import QPrinter, QPrintPreviewDialog, QPrintDialog
-        from PyQt6.QtGui import QTextDocument, QPageSize
-        from PyQt6.QtCore import QSizeF
+        from PyQt5.QtPrintSupport import QPrinter, QPrintPreviewDialog, QPrintDialog
+        from PyQt5.QtGui import QTextDocument
+        from PyQt5.QtCore import QSizeF
 
         html = _build_html_preview(invoice)
         doc  = QTextDocument()
         doc.setHtml(html)
         doc.setPageSize(QSizeF(595, 842))
 
-        printer = QPrinter(QPrinter.PrinterMode.HighResolution)
-        printer.setPageSize(QPageSize(QPageSize.PageSizeId.A4))
+        printer = QPrinter(QPrinter.HighResolution)
+        printer.setPageSize(QPrinter.A4)
 
         if preview:
             dialog = QPrintPreviewDialog(printer, parent)
@@ -670,7 +751,7 @@ def print_invoice(invoice: dict, parent=None, preview=True):
             dialog.exec()
         else:
             dialog = QPrintDialog(printer, parent)
-            if dialog.exec() == QPrintDialog.DialogCode.Accepted:
+            if dialog.exec() == QPrintDialog.Accepted:
                 doc.print(printer)
 
     except Exception:
@@ -678,9 +759,9 @@ def print_invoice(invoice: dict, parent=None, preview=True):
         reply = QMessageBox.question(
             parent, "Printer Not Available",
             "Could not open print dialog.\nSave as PDF instead?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            QMessageBox.Yes | QMessageBox.No
         )
-        if reply == QMessageBox.StandardButton.Yes:
+        if reply == QMessageBox.Yes:
             save_invoice_as_pdf(invoice, parent)
 
 

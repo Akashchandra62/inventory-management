@@ -1,11 +1,11 @@
 # ui/backup_page.py
-from PyQt6.QtWidgets import (
+from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QFileDialog, QMessageBox, QGroupBox,
     QFrame, QScrollArea, QTextEdit
 )
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QFont
+from PyQt5.QtCore import Qt
+from PyQt5.QtGui import QFont
 from services.backup_service import backup_all, restore_backup
 from app.constants import BACKUP_DIR
 import os
@@ -17,12 +17,12 @@ class BackupPage(QWidget):
         self._build_ui()
 
     def _build_ui(self):
-        scroll = QScrollArea(self); scroll.setWidgetResizable(True); scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll = QScrollArea(self); scroll.setWidgetResizable(True); scroll.setFrameShape(QFrame.NoFrame)
         outer = QVBoxLayout(self); outer.setContentsMargins(0,0,0,0); outer.addWidget(scroll)
         container = QWidget(); scroll.setWidget(container)
         root = QVBoxLayout(container); root.setContentsMargins(25,20,25,20); root.setSpacing(18)
 
-        title = QLabel("💾  Backup & Restore"); title.setFont(QFont("Segoe UI",16,QFont.Weight.Bold))
+        title = QLabel("💾  Backup & Restore"); title.setFont(QFont("Segoe UI",16,QFont.Bold))
         root.addWidget(title)
 
         # Backup section
@@ -88,9 +88,9 @@ class BackupPage(QWidget):
         reply = QMessageBox.warning(
             self, "Restore Confirmation",
             "This will REPLACE all current data with the backup.\n\nAre you absolutely sure?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            QMessageBox.Yes | QMessageBox.No
         )
-        if reply != QMessageBox.StandardButton.Yes: return
+        if reply != QMessageBox.Yes: return
 
         folder = QFileDialog.getExistingDirectory(self, "Select Backup Folder to Restore", self._backup_dir)
         if not folder: return

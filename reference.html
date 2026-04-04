@@ -1,0 +1,484 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<title>Sharda Mani Jewellers - Tax Invoice</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+
+  body {
+    background:#ccc;
+    font-family: Arial, sans-serif;
+    padding: 20px;
+    display:flex;
+    justify-content:center;
+  }
+
+  .invoice {
+    width: 750px;
+    background: #fff;
+    border: 2px solid #000;
+    position: relative;
+    padding: 0;
+    font-size: 12px;
+  }
+
+  /* ── WATERMARK ── */
+  .watermark {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%) rotate(-35deg);
+    font-size: 150px;
+    font-weight: 900;
+    color: rgba(0,0,0,0.045);
+    letter-spacing: 10px;
+    pointer-events: none;
+    z-index: 0;
+    white-space: nowrap;
+    user-select: none;
+    font-family: Arial Black, sans-serif;
+  }
+
+  /* All content sits above watermark */
+  .invoice > *:not(.watermark) { position: relative; z-index: 1; }
+
+  /* ── TOP GSTIN / MOBILE BAR ── */
+  .top-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 4px 10px;
+    border-bottom: 1px solid #000;
+    font-size: 10.5px;
+  }
+
+  /* ── HEADER ── */
+  .header {
+    display: grid;
+    grid-template-columns: 90px 1fr 80px;
+    align-items: center;
+    padding: 6px 10px 4px;
+    border-bottom: 1px solid #000;
+    gap: 6px;
+  }
+
+  /* SMJ logo box — plain black bordered square like the original */
+  .logo-box {
+    width: 82px;
+    height: 82px;
+    border: 2px solid #000;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    font-weight: 900;
+    font-size: 28px;
+    font-family: Arial Black, sans-serif;
+    letter-spacing: -1px;
+    line-height: 1;
+  }
+
+  .logo-box .logo-line { font-size: 8px; font-weight: 700; letter-spacing: 2px; margin-top: 2px; font-family: Arial, sans-serif; }
+
+  .shop-center { text-align: center; }
+
+  .mantra { font-size: 11px; margin-bottom: 2px; }
+
+  .shop-name {
+    font-size: 32px;
+    font-weight: 900;
+    font-family: Arial Black, sans-serif;
+    letter-spacing: 0.5px;
+    line-height: 1.1;
+  }
+
+  .shop-tagline { font-size: 11px; font-style: italic; margin-top: 2px; }
+  .shop-address { font-size: 10.5px; margin-top: 2px; }
+
+  /* Right sticker — replicate the original BIS-style box */
+  .right-sticker {
+    width: 78px;
+    height: 78px;
+    border: 2px solid #000;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    font-size: 9px;
+    font-weight: 700;
+    text-align: center;
+    line-height: 1.4;
+    gap: 2px;
+  }
+
+  .right-sticker .sticker-icon { font-size: 26px; line-height: 1; }
+  .right-sticker .sticker-text { font-size: 8px; font-weight: 700; letter-spacing: 0.5px; }
+
+  /* Phone row under header */
+  .phone-row {
+    text-align: right;
+    padding: 2px 10px 3px;
+    font-size: 10.5px;
+    border-bottom: 1px solid #000;
+  }
+
+  /* ── TAX INVOICE STRIP ── */
+  .tax-strip {
+    text-align: center;
+    font-weight: 700;
+    font-size: 13px;
+    letter-spacing: 3px;
+    padding: 4px;
+    border-bottom: 1px solid #000;
+    text-decoration: underline;
+  }
+
+  /* ── CUSTOMER + INVOICE META ── */
+  .info-row {
+    display: grid;
+    grid-template-columns: 1fr 220px;
+    border-bottom: 1px solid #000;
+  }
+
+  .customer { padding: 5px 10px; }
+  .customer .row { display: flex; gap: 6px; margin-bottom: 3px; font-size: 11.5px; }
+  .customer .row .lbl { font-weight: 700; min-width: 120px; }
+
+  .inv-meta {
+    border-left: 1px solid #000;
+    padding: 5px 10px;
+    font-size: 11.5px;
+  }
+  .inv-meta .row { display: flex; justify-content: space-between; margin-bottom: 3px; }
+  .inv-meta .row .lbl { font-weight: 700; }
+
+  .state-line {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 4px;
+    padding-top: 4px;
+    border-top: 1px solid #ccc;
+    font-size: 10.5px;
+  }
+
+  /* ── TABLE ── */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 11px;
+  }
+
+  table th {
+    border: 1px solid #000;
+    padding: 4px 3px;
+    text-align: center;
+    font-size: 10px;
+    font-weight: 700;
+    background: #f5f5f5;
+    line-height: 1.3;
+  }
+
+  table td {
+    border: 1px solid #000;
+    padding: 4px 3px;
+    text-align: center;
+    vertical-align: middle;
+    font-size: 11.5px;
+  }
+
+  table td.left { text-align: left; padding-left: 6px; }
+
+  .item-name { font-weight: 700; font-size: 13px; }
+  .item-sub  { font-size: 10px; color: #555; }
+
+  .total-row td { font-weight: 700; background: #f9f9f9; }
+
+  /* ── BOTTOM SECTION ── */
+  .bottom {
+    display: grid;
+    grid-template-columns: 1fr 220px;
+    border-top: 1px solid #000;
+  }
+
+  .left-bottom { border-right: 1px solid #000; }
+
+  /* Payment detail box */
+  .payment-box { border-bottom: 1px solid #000; padding: 5px 10px; font-size: 11.5px; }
+  .payment-box .title { font-weight: 700; text-decoration: underline; margin-bottom: 4px; font-size: 12px; }
+  .payment-row-item { display: flex; justify-content: space-between; margin-bottom: 2px; }
+  .payment-row-item .lbl { font-weight: 700; }
+
+  /* Amount in words */
+  .words-box { border-bottom: 1px solid #000; padding: 5px 10px; font-size: 11.5px; }
+  .words-box .title { font-weight: 700; text-decoration: underline; margin-bottom: 2px; font-size: 12px; }
+
+  /* Bank detail */
+  .bank-box { padding: 5px 10px; font-size: 11px; }
+  .bank-box .title { font-weight: 700; text-decoration: underline; margin-bottom: 3px; font-size: 12px; }
+  .bank-box p { margin-bottom: 2px; }
+
+  /* Right side totals */
+  .right-bottom { font-size: 11.5px; }
+
+  .total-summary-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 4px 10px;
+    border-bottom: 1px solid #000;
+    align-items: center;
+  }
+  .total-summary-row .lbl { color: #333; }
+  .total-summary-row .colon { color: #333; margin: 0 4px; }
+  .total-summary-row .val { font-weight: 600; min-width: 70px; text-align: right; }
+  .total-summary-row.net {
+    font-weight: 700;
+    font-size: 13px;
+    background: #f0f0f0;
+    border-top: 2px solid #000;
+  }
+
+  /* Signature */
+  .sig-box {
+    padding: 10px;
+    text-align: center;
+    font-size: 11px;
+    min-height: 50px;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 3px;
+    border-top: 1px solid #000;
+  }
+  .sig-line { width: 120px; border-top: 1px solid #000; margin-bottom: 3px; }
+
+  /* ── TERMS ── */
+  .terms {
+    border-top: 1px solid #000;
+    padding: 6px 10px;
+    font-size: 10.5px;
+  }
+  .terms .title { font-weight: 700; text-decoration: underline; margin-bottom: 3px; font-size: 11px; }
+  .terms ol { padding-left: 16px; line-height: 1.7; }
+
+  /* ── FOOTER ── */
+  .footer {
+    border-top: 2px solid #000;
+    padding: 4px 10px;
+    display: flex;
+    justify-content: space-between;
+    font-size: 10px;
+    font-weight: 600;
+  }
+
+  @media print {
+    body { background: white; padding: 0; }
+    .invoice { border: 2px solid #000; box-shadow: none; }
+  }
+</style>
+</head>
+<body>
+
+<div class="invoice">
+
+  <!-- WATERMARK -->
+  <div class="watermark">SMJ</div>
+
+  <!-- TOP BAR -->
+  <div class="top-bar">
+    <span>GSTIN :- 10BROPK1164P1ZH</span>
+    <span style="font-size:11px; letter-spacing:1px;">॥ श्री गणेशाय नमः ॥</span>
+    <span>Mobile No. :- 9934680934<br>8864014674</span>
+  </div>
+
+  <!-- HEADER -->
+  <div class="header">
+    <!-- Left: SMJ logo box -->
+    <div class="logo-box">
+      SMJ
+      <div class="logo-line">JEWELLERS</div>
+    </div>
+
+    <!-- Center: shop name -->
+    <div class="shop-center">
+      <div class="shop-name">Sharda Mani Jewellers</div>
+      <div class="shop-tagline">Deals In All Type Of Hallmark Jewellery</div>
+      <div class="shop-address">Vinit Complex, G. T. Road (In Front Of Nishant Cinema) Sasaram,(Rohtas) Bihar</div>
+    </div>
+
+    <!-- Right: BIS sticker style box -->
+    <div class="right-sticker">
+      <div class="sticker-icon">💍</div>
+      <div class="sticker-text">BIS<br>HALLMARK<br>CERTIFIED</div>
+    </div>
+  </div>
+
+  <!-- Phone row -->
+  <div class="phone-row" style="display:none;"></div>
+
+  <!-- TAX INVOICE STRIP -->
+  <div class="tax-strip">TAX INVOICE</div>
+
+  <!-- CUSTOMER + INVOICE META -->
+  <div class="info-row">
+    <div class="customer">
+      <div class="row"><span class="lbl">Name :-</span><span>PRASU JEE</span></div>
+      <div class="row"><span class="lbl">Address :-</span><span>MICO</span></div>
+      <div class="row"><span class="lbl">Phone No.</span><span></span></div>
+      <div class="row"><span class="lbl">Customer GST NO:-</span><span></span></div>
+    </div>
+    <div class="inv-meta">
+      <div class="row"><span class="lbl">INVOICE DATE :</span><span>14-Mar-26</span></div>
+      <div class="row"><span class="lbl">INVOICE NO. :-</span><span>1718/25-26</span></div>
+      <div class="state-line">
+        <span><strong>State : Bihar Code : 10</strong></span>
+        <span style="font-style:italic;color:#555;font-size:10px;">Original Copy</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ITEMS TABLE -->
+  <table>
+    <thead>
+      <tr>
+        <th style="width:26px;">S.<br>No</th>
+        <th style="width:140px;text-align:left;padding-left:6px;">PARTICULARS/ ITEM</th>
+        <th>HSN<br>Code</th>
+        <th>Purity<br>Kt/Ct</th>
+        <th>Pcs/Pr<br>/QTY</th>
+        <th>GROSS WT.<br>(in Gms)</th>
+        <th>LESS WT.<br>(in Gms)</th>
+        <th>NETT WT.<br>(in Gms)</th>
+        <th>RATE<br>Per Gm.</th>
+        <th>Mk/Oth .Chrg.<br>Per Gm./Pcs.</th>
+        <th>Amount<br>(INR)</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>1</td>
+        <td class="left">
+          <div class="item-name">BERWA</div>
+          <div class="item-sub">SILVER</div>
+        </td>
+        <td>7113</td>
+        <td>60-70</td>
+        <td>2</td>
+        <td>23.350</td>
+        <td>0.000</td>
+        <td>23.350</td>
+        <td>195</td>
+        <td>10.00%</td>
+        <td><strong>5,009.00</strong></td>
+      </tr>
+      <!-- blank rows to match invoice look -->
+      <tr style="height:22px;"><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+      <tr style="height:22px;"><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+      <tr style="height:22px;"><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+      <tr style="height:22px;"><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+      <tr style="height:22px;"><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+    </tbody>
+    <!-- TOTAL ROW -->
+    <tr class="total-row">
+      <td colspan="4" style="text-align:right;padding-right:8px;font-size:11px;"></td>
+      <td style="text-align:center;border:1px solid #000;"></td>
+      <td style="border:1px solid #000;"><strong>23.350</strong></td>
+      <td style="border:1px solid #000;"></td>
+      <td style="border:1px solid #000;"><strong>23.350</strong></td>
+      <td style="border:1px solid #000;"></td>
+      <td style="border:1px solid #000;"></td>
+      <td style="border:1px solid #000;"><strong>5009</strong></td>
+    </tr>
+  </table>
+
+  <!-- BOTTOM -->
+  <div class="bottom">
+
+    <!-- LEFT -->
+    <div class="left-bottom">
+
+      <!-- Payment Detail -->
+      <div class="payment-box">
+        <div class="title">Payment Detail :</div>
+        <div class="payment-row-item">
+          <span class="lbl">UPI</span>
+          <span>5,150 /-</span>
+        </div>
+        <div class="payment-row-item">
+          <span class="lbl">TOTAL PAYMENT -</span>
+          <span>5,150 /-</span>
+        </div>
+      </div>
+
+      <!-- Amount in words -->
+      <div class="words-box">
+        <div class="title">Amount In Word</div>
+        <p>Rupees: Five Thousand One Hundred Fifty &nbsp; Only</p>
+      </div>
+
+      <!-- Bank Detail -->
+      <div class="bank-box">
+        <div class="title">Bank Detail :</div>
+        <p>Bank Name :- HDFC BANK</p>
+        <p>A/c Name :- Sharda Mani Jewellers</p>
+        <p>A/c No. :- 50200039703170</p>
+        <p>Branch Opp. Prakash Petrol Pump. G. T. Road Sasaram</p>
+        <p>IFSC :- HDFC0002052</p>
+      </div>
+    </div>
+
+    <!-- RIGHT -->
+    <div class="right-bottom">
+      <div class="total-summary-row">
+        <span class="lbl">Gross Amount</span><span class="colon">:</span><span class="val">5,009.00</span>
+      </div>
+      <div class="total-summary-row">
+        <span class="lbl">CGST@ 1.5%</span><span class="colon">·</span><span class="val">75.14</span>
+      </div>
+      <div class="total-summary-row">
+        <span class="lbl">SGST@ 1.5%</span><span class="colon">:</span><span class="val">75.14</span>
+      </div>
+      <div class="total-summary-row">
+        <span class="lbl">Amt After GST</span><span class="colon">:</span><span class="val">5,159.28</span>
+      </div>
+      <div class="total-summary-row">
+        <span class="lbl">Round Off</span><span class="colon">:</span><span class="val">- 9.28</span>
+      </div>
+      <div class="total-summary-row net">
+        <span class="lbl">Net Payable</span><span class="colon">:</span><span class="val">5,150.00</span>
+      </div>
+      <!-- Signature -->
+      <div class="sig-box">
+        <div class="sig-line"></div>
+        <span>Customer's Signature</span>
+      </div>
+    </div>
+
+  </div><!-- /bottom -->
+
+  <!-- TERMS -->
+  <div class="terms">
+    <div class="title">Terms &amp; Condition of Sale</div>
+    <ol>
+      <li>लेन देन के समय रसीद लाना आवश्यक है।</li>
+      <li>आर्डर देने के समय 75% जमा देना अनिवार्य है अन्यथा दाम बढ़ने से बड़ा हुआ लगेगा।
+        और 90% एडवांस देने पर डिलिवरी के समय घटी हुआ दाम मिलेगी।</li>
+      <li>रसीद खो जाने पर किसी भी प्रकार की जिमेदारी नही होगी।</li>
+      <li>लॉकी पॉलिश से कटाव हो सकता है।</li>
+      <li>जेवर टूटने फूटने का कोई गारंटी नही है।</li>
+      <li>मूल चूक लेनी देनी।</li>
+    </ol>
+  </div>
+
+  <!-- FOOTER -->
+  <div class="footer">
+    <span>SUBJECT TO ROHTAS JURISDICTION</span>
+    <span>NOTE :- FOR ANY TYPE OF EXCHANGE OR SALE THE BILL IS COMPULSORY</span>
+    <span>Sign &amp; Seal</span>
+  </div>
+
+</div><!-- /invoice -->
+
+</body>
+</html>

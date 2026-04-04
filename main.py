@@ -17,7 +17,7 @@ if ROOT not in sys.path:
 if sys.platform == "win32":
     try:
         import importlib.util
-        spec = importlib.util.find_spec("PyQt6")
+        spec = importlib.util.find_spec("PyQt5")
         if spec and spec.submodule_search_locations:
             pyqt6_root = list(spec.submodule_search_locations)[0]
             for sub in ["Qt6\\bin", "Qt6\\plugins\\platforms", "Qt6\\plugins"]:
@@ -32,15 +32,15 @@ if sys.platform == "win32":
 
 # ── Safe to import PyQt6 now ─────────────────────────────────
 import logging
-from PyQt6.QtWidgets import QApplication, QMessageBox, QPushButton
-from PyQt6.QtGui import QFont
-from PyQt6.QtCore import Qt
+from PyQt5.QtWidgets import QApplication, QMessageBox, QPushButton
+from PyQt5.QtGui import QFont
+from PyQt5.QtCore import Qt
 
 # Globally transform all QPushButtons to have the pointing hand cursor on hover
 _orig_btn_init = QPushButton.__init__
 def _patched_btn_init(self, *args, **kwargs):
     _orig_btn_init(self, *args, **kwargs)
-    self.setCursor(Qt.CursorShape.PointingHandCursor)
+    self.setCursor(Qt.PointingHandCursor)
 QPushButton.__init__ = _patched_btn_init
 
 from app.constants import APP_NAME, DATA_ROOT, LOGS_DIR
