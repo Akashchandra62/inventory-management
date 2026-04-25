@@ -1,12 +1,30 @@
 # -*- mode: python ; coding: utf-8 -*-
 
-
 a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[('assets', 'assets'), ('app', 'app'), ('ui', 'ui'), ('models', 'models'), ('services', 'services')],
-    hiddenimports=[],
+    datas=[
+        ('assets', 'assets'),
+        ('app',      'app'),
+        ('ui',       'ui'),
+        ('models',   'models'),
+        ('services', 'services'),
+    ],
+    hiddenimports=[
+        # ReportLab internals PyInstaller often misses
+        'reportlab.graphics.barcode.common',
+        'reportlab.graphics.barcode.code128',
+        'reportlab.graphics.barcode.qr',
+        'reportlab.lib.pagesizes',
+        'reportlab.pdfbase.ttfonts',
+        'reportlab.pdfbase.pdfmetrics',
+        'reportlab.platypus',
+        # PyQt5 platform plugin
+        'PyQt5.QtPrintSupport',
+        # watchdog backends
+        'watchdog.observers.winapi',
+    ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -29,10 +47,11 @@ exe = EXE(
     upx=True,
     upx_exclude=[],
     runtime_tmpdir=None,
-    console=False,
+    console=False,          # no black terminal window
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon=None,              # replace with 'assets\\icon.ico' if you have one
 )

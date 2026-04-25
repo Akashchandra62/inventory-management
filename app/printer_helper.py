@@ -10,7 +10,7 @@ import traceback
 from PyQt5.QtWidgets import QMessageBox, QFileDialog
 from app.config import AppConfig
 from app.utils import format_currency
-from app.constants import LOGO_FILE, QR_FILE
+from app.constants import LOGO_FILE, QR_FILE, CERTIFICATE_FILE
 
 
 def _qt_render(text: str, font_pt: int = 9, dpi: int = 300):
@@ -170,6 +170,20 @@ def _generate_pdf(invoice: dict, path: str):
     LGRAY = colors.HexColor('#f5f5f5')   # table header bg
     DGRAY = colors.HexColor('#f0f0f0')   # net payable row bg
     MGRAY = colors.HexColor('#f9f9f9')   # totals row bg
+    SUBT  = colors.HexColor('#e4e4e4')   # purity sub-total row bg (light gray)
+
+    # Build a purity→metal-name lookup from the metals rate-card
+    try:
+        from services.metal_service import get_metals as _gm
+        _metals_map = {m.get('purity', '').strip().upper(): m.get('name', '')
+                       for m in _gm() if m.get('purity')}
+    except Exception:
+        _metals_map = {}
+
+    def _metal_label(purity: str) -> str:
+        """Return 'Gold 22Kt' style label, or just the purity if no match found."""
+        metal = _metals_map.get(purity.strip().upper(), '')
+        return f"{metal} {purity}".strip() if metal else purity
 
     # ── Shop data ─────────────────────────────────────────────
     shop         = AppConfig.shop()
@@ -331,8 +345,16 @@ def _generate_pdf(invoice: dict, path: str):
                          P(address, size=8, align=TA_CENTER)]
     center_cell = center_items      # list of flowables — cell auto-sizes
 
-    # Right: BIS sticker (always); QR lives in bank section below
-    right_hdr = _make_bis_box(BOX_COL - 4 * mm, BLACK)
+    # Right: uploaded certificate/hallmark image, or BIS box as fallback
+    if os.path.exists(CERTIFICATE_FILE):
+        try:
+            right_hdr = RLImage(CERTIFICATE_FILE,
+                                width=BOX_COL - 4 * mm,
+                                height=BOX_COL - 4 * mm)
+        except Exception:
+            right_hdr = _make_bis_box(BOX_COL - 4 * mm, BLACK)
+    else:
+        right_hdr = _make_bis_box(BOX_COL - 4 * mm, BLACK)
 
     header_tbl = Table(
         [[left_hdr, center_cell, right_hdr]],
@@ -423,85 +445,145 @@ def _generate_pdf(invoice: dict, path: str):
 
     # ══════════════════════════════════════════════════════════
     # 5. ITEMS TABLE  (11 columns, sum = 190 mm)
+    #    Items are grouped by Metal (Gold, Silver, etc.).
+    #    A "Gold Total" / "Silver Total" row is inserted after
+    #    each metal group, always shown, with a gray background.
     # ══════════════════════════════════════════════════════════
-    col_w = [8*mm, 40*mm, 14*mm, 13*mm, 10*mm,
-             17*mm, 15*mm, 15*mm, 14*mm, 22*mm, 22*mm]
+    col_w = [8*mm, 12*mm, 30*mm, 16*mm, 12*mm, 12*mm, 8*mm,
+             16*mm, 12*mm, 12*mm, 12*mm, 18*mm, 22*mm]
 
     hdr_texts = [
-        'S.\nNo', 'PARTICULARS/\nITEM', 'HSN\nCode', 'Purity\nKt/Ct',
-        'Pcs/\nQTY', 'GROSS WT.\n(in Gms)', 'LESS WT.\n(in Gms)',
-        'NETT WT.\n(in Gms)', 'RATE\nPer Gm.', 'Mk/Oth.Chrg.\nPer Gm/Pcs',
-        'Amount\n(INR)'
+        'S.\nNo', 'Tag/\nRFID', 'PARTICULARS/\nITEM', 'HUID/\nRemarks',
+        'HSN\nCode', 'Purity\nKt/Ct', 'Pcs/\nQTY',
+        'GROSS WT.\n(in Gms)', 'LESS WT.\n(in Gms)', 'NETT WT.\n(in Gms)',
+        'RATE\nPer Gm.', 'Mk/Oth.Chrg.\nPer Gm/Pcs', 'Amount\n(INR)'
     ]
-    rows = [[TH(h) for h in hdr_texts]]
+
+    def _item_metal_name(purity: str) -> str:
+        """Return metal name (Gold/Silver/…) for a purity, falling back to purity itself."""
+        metal = _metals_map.get(purity.strip().upper(), '')
+        return metal if metal else purity
+
+    # ── Group items by metal name (preserve insertion order) ──
+    from collections import OrderedDict as _OD
+    _metal_groups = _OD()
+    for _it in items:
+        _p  = (_it.get('purity') or 'Other').strip()
+        _mn = _item_metal_name(_p)
+        _metal_groups.setdefault(_mn, []).append(_it)
+
+    metal_row_indices = []   # 0-based row indices of metal-total rows
+
+    rows      = [[TH(h) for h in hdr_texts]]
     gross_tot = 0.0
     nett_tot  = 0.0
+    serial_no = 0
 
-    for i, it in enumerate(items, 1):
-        gw  = float(it.get('weight',        0))
-        lw  = float(it.get('less_weight',   0))
-        nw  = round(gw - lw, 3)
-        mk  = float(it.get('making_charge', 0))
-        amt = float(it.get('total',         0))
-        cat = it.get('category', '')
-        gross_tot += gw
-        nett_tot  += nw
-        mk_str = f"{mk:.2f}%" if mk <= 100 else f"\u20b9{mk:,.2f}"
+    for metal_name, grp_items in _metal_groups.items():
+        gw_grp = nw_grp = amt_grp = 0.0
 
-        name_p = Paragraph(
-            f'<b>{it.get("name", "")}</b>'
-            f'<br/><font size="7" color="#555555">{cat}</font>',
-            _ps(size=9, bold=True, align=TA_LEFT, leading=12)
+        for it in grp_items:
+            serial_no += 1
+            gw  = float(it.get('weight',        0))
+            lw  = float(it.get('less_weight',   0))
+            nw  = round(gw - lw, 3)
+            mk  = float(it.get('making_charge', 0))
+            amt = float(it.get('total',         0))
+            cat = it.get('category', '')
+            gross_tot += gw;  nett_tot  += nw
+            gw_grp    += gw;  nw_grp    += nw;  amt_grp += amt
+            mk_str = f"{mk:.2f}%" if mk <= 100 else f"\u20b9{mk:,.2f}"
+
+            name_p = Paragraph(
+                f'<b>{it.get("name", "")}</b>'
+                f'<br/><font size="7" color="#555555">{cat}</font>',
+                _ps(size=9, bold=True, align=TA_LEFT, leading=12)
+            )
+            rows.append([
+                TD(serial_no),
+                TD(it.get('tag',  '')),
+                name_p,
+                TD(it.get('huid', '')),
+                TD(it.get('hsn_code', '7113')),
+                TD(it.get('purity', '')),
+                TD(it.get('quantity', 1)),
+                TD(f"{gw:.3f}"),
+                TD(f"{lw:.3f}"),
+                TD(f"{nw:.3f}"),
+                TD(f"{float(it.get('rate', 0)):.0f}"),
+                TD(mk_str),
+                TD(f"{amt:,.2f}", bold=True),
+            ])
+
+        # Metal total row — always shown
+        metal_lbl = Paragraph(
+            f'<b>{metal_name} Total</b>',
+            _ps(size=9, bold=True, align=TA_LEFT)
         )
         rows.append([
-            TD(i),
-            name_p,
-            TD(it.get('hsn_code', '7113')),
-            TD(it.get('purity', '')),
-            TD(it.get('quantity', 1)),
-            TD(f"{gw:.3f}"),
-            TD(f"{lw:.3f}"),
-            TD(f"{nw:.3f}"),
-            TD(f"{float(it.get('rate', 0)):.0f}"),
-            TD(mk_str),
-            TD(f"{amt:,.2f}", bold=True),
+            metal_lbl,                                      # col 0 — spans 0-6
+            TD(''), TD(''), TD(''), TD(''), TD(''), TD(''), # cols 1-6 (merged)
+            TD(f'{gw_grp:.3f}',   bold=True),
+            TD(''),
+            TD(f'{nw_grp:.3f}',   bold=True),
+            TD(''), TD(''),
+            TD(f'{amt_grp:,.2f}', bold=True),
         ])
+        metal_row_indices.append(len(rows) - 1)
 
-    n_items = len(items)
-    n_blank = max(5 - n_items, 2)
-    empty_r = [TD('') for _ in col_w]
-    for _   in range(n_blank):
+    n_data_rows = len(rows) - 1          # header not counted
+    n_blank     = max(5 - len(items), 2)
+    empty_r     = [TD('') for _ in col_w]
+    for _       in range(n_blank):
         rows.append(empty_r)
 
-    # totals row
+    # Grand totals row
     rows.append([
-        TD(''), TD(''), TD(''), TD(''), TD(''),
+        TD(''), TD(''), TD(''), TD(''), TD(''), TD(''), TD(''),
         TD(f"{gross_tot:.3f}", bold=True),
         TD(''),
-        TD(f"{nett_tot:.3f}", bold=True),
+        TD(f"{nett_tot:.3f}",  bold=True),
         TD(''), TD(''),
         TD(f"{subtotal:,.2f}", bold=True),
     ])
 
     nr = len(rows)
+
+    # ── Base table style ──────────────────────────────────────
+    style_cmds = [
+        ('BACKGROUND',    (0, 0),              (-1, 0),      LGRAY),
+        ('FONTNAME',      (0, 0),              (-1, 0),      'Helvetica-Bold'),
+        ('GRID',          (0, 0),              (-1, -1),     0.5, BLACK),
+        ('ALIGN',         (0, 0),              (-1, -1),     'CENTER'),
+        ('VALIGN',        (0, 0),              (-1, -1),     'MIDDLE'),
+        ('TOPPADDING',    (0, 0),              (-1, -1),     3),
+        ('BOTTOMPADDING', (0, 0),              (-1, -1),     3),
+        # item-name column: left-aligned for all data rows
+        ('ALIGN',         (2, 1),              (2, n_data_rows), 'LEFT'),
+        ('LEFTPADDING',   (2, 1),              (2, n_data_rows), 4),
+        # blank filler rows: thin height
+        ('ROWHEIGHT',     (0, n_data_rows + 1), (-1, nr - 2), 15),
+        # grand totals row
+        ('BACKGROUND',    (0, -1),             (-1, -1),     MGRAY),
+        ('FONTNAME',      (0, -1),             (-1, -1),     'Helvetica-Bold'),
+    ]
+
+    # ── Metal total row styling ────────────────────────────────
+    for mri in metal_row_indices:
+        style_cmds += [
+            ('SPAN',        (0, mri), (6,  mri)),
+            ('BACKGROUND',  (0, mri), (-1, mri), SUBT),
+            ('FONTNAME',    (0, mri), (-1, mri), 'Helvetica-Bold'),
+            ('LINEABOVE',   (0, mri), (-1, mri), 1.2, BLACK),
+            ('LINEBELOW',   (0, mri), (-1, mri), 1.2, BLACK),
+            ('ALIGN',       (0, mri), (0,  mri), 'LEFT'),
+            ('LEFTPADDING', (0, mri), (0,  mri), 8),
+            ('ROWHEIGHT',   (0, mri), (-1, mri), 20),
+            ('VALIGN',      (0, mri), (-1, mri), 'MIDDLE'),
+        ]
+
     items_tbl = Table(rows, colWidths=col_w, repeatRows=1)
-    items_tbl.setStyle(TableStyle([
-        ('BACKGROUND',    (0, 0),            (-1, 0),            LGRAY),
-        ('FONTNAME',      (0, 0),            (-1, 0),            'Helvetica-Bold'),
-        ('GRID',          (0, 0),            (-1, -1),           0.5, BLACK),
-        ('ALIGN',         (0, 0),            (-1, -1),           'CENTER'),
-        ('VALIGN',        (0, 0),            (-1, -1),           'MIDDLE'),
-        ('TOPPADDING',    (0, 0),            (-1, -1),           3),
-        ('BOTTOMPADDING', (0, 0),            (-1, -1),           3),
-        # item name column: left-aligned
-        ('ALIGN',         (1, 1),            (1, nr - 2),        'LEFT'),
-        ('LEFTPADDING',   (1, 1),            (1, nr - 2),        4),
-        # blank filler rows: fixed height
-        ('ROWHEIGHT',     (0, n_items + 1),  (-1, nr - 2),       15),
-        # totals row
-        ('BACKGROUND',    (0, -1),           (-1, -1),           MGRAY),
-        ('FONTNAME',      (0, -1),           (-1, -1),           'Helvetica-Bold'),
-    ]))
+    items_tbl.setStyle(TableStyle(style_cmds))
     story.append(items_tbl)
 
     # ══════════════════════════════════════════════════════════
@@ -767,6 +849,7 @@ def print_invoice(invoice: dict, parent=None, preview=True):
 
 def _build_html_preview(invoice: dict) -> str:
     """Minimal HTML for Qt print preview — mirrors the reference layout."""
+    from collections import OrderedDict as _OD
     shop     = AppConfig.shop()
     items    = invoice.get("items", [])
     subtotal = float(invoice.get("subtotal",   0))
@@ -777,25 +860,67 @@ def _build_html_preview(invoice: dict) -> str:
     grand    = float(invoice.get("grand_total", subtotal + cgst_amt + sgst_amt))
     round_off = round(grand - (subtotal + cgst_amt + sgst_amt), 2)
 
+    # Build purity → metal-name lookup
+    try:
+        from services.metal_service import get_metals as _gm2
+        _mmap = {m.get('purity','').strip().upper(): m.get('name','')
+                 for m in _gm2() if m.get('purity')}
+    except Exception:
+        _mmap = {}
+
+    def _mlabel(purity):
+        metal = _mmap.get(purity.strip().upper(), '')
+        return f"{metal} {purity}".strip() if metal else purity
+
+    def _item_metal(purity: str) -> str:
+        metal = _mmap.get(purity.strip().upper(), '')
+        return metal if metal else purity
+
+    # Group items by metal name
+    _grps = _OD()
+    for _it in items:
+        _p  = (_it.get('purity') or 'Other').strip()
+        _mn = _item_metal(_p)
+        _grps.setdefault(_mn, []).append(_it)
+
     rows_html = ""
-    for i, it in enumerate(items, 1):
-        gw  = float(it.get('weight', 0))
-        lw  = float(it.get('less_weight', 0))
-        nw  = round(gw - lw, 3)
-        mk  = float(it.get('making_charge', 0))
-        mk_s = f"{mk:.2f}%" if mk <= 100 else f"₹{mk:,.2f}"
+    serial = 0
+    for metal_name, grp_items in _grps.items():
+        gw_grp = nw_grp = amt_grp = 0.0
+        for it in grp_items:
+            gw  = float(it.get('weight', 0))
+            lw  = float(it.get('less_weight', 0))
+            nw  = round(gw - lw, 3)
+            mk  = float(it.get('making_charge', 0))
+            mk_s = f"{mk:.2f}%" if mk <= 100 else f"₹{mk:,.2f}"
+            gw_grp += gw; nw_grp += nw; amt_grp += float(it.get('total', 0))
+            serial += 1
+            rows_html += (
+                f"<tr>"
+                f"<td>{serial}</td>"
+                f"<td>{it.get('tag','')}</td>"
+                f"<td style='text-align:left'><b>{it.get('name','')}</b>"
+                f"<br/><small style='color:#555'>{it.get('category','')}</small></td>"
+                f"<td>{it.get('huid','')}</td>"
+                f"<td>{it.get('hsn_code','7113')}</td>"
+                f"<td>{it.get('purity','')}</td>"
+                f"<td>{it.get('quantity','')}</td>"
+                f"<td>{gw:.3f}</td><td>{lw:.3f}</td><td>{nw:.3f}</td>"
+                f"<td>{float(it.get('rate',0)):.0f}</td>"
+                f"<td>{mk_s}</td>"
+                f"<td><b>{float(it.get('total',0)):,.2f}</b></td>"
+                f"</tr>"
+            )
+        # Metal total row — always shown
         rows_html += (
-            f"<tr>"
-            f"<td>{i}</td>"
-            f"<td style='text-align:left'><b>{it.get('name','')}</b>"
-            f"<br/><small style='color:#555'>{it.get('category','')}</small></td>"
-            f"<td>{it.get('hsn_code','7113')}</td>"
-            f"<td>{it.get('purity','')}</td>"
-            f"<td>{it.get('quantity','')}</td>"
-            f"<td>{gw:.3f}</td><td>{lw:.3f}</td><td>{nw:.3f}</td>"
-            f"<td>{float(it.get('rate',0)):.0f}</td>"
-            f"<td>{mk_s}</td>"
-            f"<td><b>{float(it.get('total',0)):,.2f}</b></td>"
+            f"<tr style='background:#e4e4e4;font-weight:bold;'>"
+            f"<td colspan='7' style='text-align:left;padding-left:8px;'>"
+            f"{metal_name} Total</td>"
+            f"<td>{gw_grp:.3f}</td>"
+            f"<td></td>"
+            f"<td>{nw_grp:.3f}</td>"
+            f"<td></td><td></td>"
+            f"<td>{amt_grp:,.2f}</td>"
             f"</tr>"
         )
 
@@ -884,8 +1009,8 @@ def _build_html_preview(invoice: dict) -> str:
   </div>
   <table>
     <thead><tr>
-      <th>S.No</th><th style="text-align:left">PARTICULARS/ITEM</th>
-      <th>HSN</th><th>Purity</th><th>Qty</th>
+      <th>S.No</th><th>Tag/RFID</th><th style="text-align:left">PARTICULARS/ITEM</th>
+      <th>HUID/Remarks</th><th>HSN</th><th>Purity</th><th>Qty</th>
       <th>Gross Wt</th><th>Less Wt</th><th>Nett Wt</th>
       <th>Rate</th><th>Mk/Chrg</th><th>Amount</th>
     </tr></thead>

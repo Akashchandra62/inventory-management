@@ -40,6 +40,11 @@ class AppConfig:
         return cats if cats else ["Gold", "Silver", "Diamond", "Platinum", "Gemstone", "Other"]
 
     @classmethod
+    def item_groups(cls) -> list[str]:
+        grp_str = cls._shop.get("item_groups", "")
+        return [g.strip() for g in grp_str.split(",") if g.strip()]
+
+    @classmethod
     def invoice_prefix(cls) -> str:
         return cls._shop.get("invoice_prefix", "JB")
 

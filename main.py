@@ -43,14 +43,13 @@ def _patched_btn_init(self, *args, **kwargs):
     self.setCursor(Qt.PointingHandCursor)
 QPushButton.__init__ = _patched_btn_init
 
-from app.constants import APP_NAME, DATA_ROOT, LOGS_DIR
-from app.file_manager import initialize_app_storage, is_first_run, ensure_all_folders
-from app.machine_auth import is_authorized
-from app.config import AppConfig
+from app.constants import APP_NAME
 
 
 def setup_logging():
     try:
+        from app.constants import LOGS_DIR
+        from app.file_manager import ensure_all_folders
         ensure_all_folders()
         log_file = os.path.join(LOGS_DIR, "app.log")
         logging.basicConfig(
@@ -65,17 +64,63 @@ def setup_logging():
         logging.basicConfig(level=logging.INFO)
 
 
+_FOCUS_QSS = """
+QLineEdit:focus {
+    border: 2px solid #3498db;
+    background-color: #eaf6fd;
+    border-radius: 4px;
+}
+QDoubleSpinBox:focus {
+    border: 2px solid #3498db;
+    background-color: #eaf6fd;
+}
+QSpinBox:focus {
+    border: 2px solid #3498db;
+    background-color: #eaf6fd;
+}
+QComboBox:focus {
+    border: 2px solid #3498db;
+    background-color: #eaf6fd;
+}
+QTextEdit:focus {
+    border: 2px solid #3498db;
+}
+"""
+
+
 def load_stylesheet(app):
     qss_path = os.path.join(ROOT, "assets", "styles", "main.qss")
     if os.path.exists(qss_path):
         with open(qss_path, "r", encoding="utf-8") as f:
             app.setStyleSheet(f.read())
+    # Always append focus highlights (works for any widget without a custom inline style)
+    app.setStyleSheet(app.styleSheet() + _FOCUS_QSS)
 
 
 def main():
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
     app.setFont(QFont("Segoe UI", 10))
+
+    # ── Profile Selection ─────────────────────────────────────
+    # Must happen BEFORE any data-path-dependent module is imported.
+    from app.profile_manager import ensure_default, show_selector
+    import app.constants as _c
+
+    profiles = ensure_default()
+    if len(profiles) > 1:
+        chosen = show_selector(APP_NAME)
+        if not chosen:
+            sys.exit(0)
+        _c.set_data_root(chosen)
+    else:
+        _c.set_data_root(profiles[0]["path"])
+
+    # ── Now safe to import data-dependent modules ─────────────
+    from app.file_manager import initialize_app_storage, is_first_run
+    from app.machine_auth import is_authorized
+    from app.config import AppConfig
+    from app.constants import DATA_ROOT
 
     # Machine Authorization
     authorized, fingerprint = is_authorized()
@@ -102,7 +147,7 @@ def main():
 
     AppConfig.load()
     setup_logging()
-    logging.info(f"{APP_NAME} starting. Machine: {fingerprint}")
+    logging.info(f"{APP_NAME} starting. Profile: {DATA_ROOT}  Machine: {fingerprint}")
     load_stylesheet(app)
 
     # First-Run Setup

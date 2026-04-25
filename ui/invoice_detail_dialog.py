@@ -1,465 +1,356 @@
 # ============================================================
-# printer_helper.py - PDF Invoice Generator
-# Everything fetched from AppConfig / uploaded assets.
-# Nothing is hardcoded.
+# ui/invoice_detail_dialog.py  –  Invoice Detail Viewer
+# Shows full customer info + purchase history for a saved invoice.
 # ============================================================
 
-import os
-import traceback
+from collections import OrderedDict
 
-from PyQt5.QtWidgets import QMessageBox, QFileDialog
-from app.config import AppConfig
+from PyQt5.QtWidgets import (
+    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
+    QTableWidget, QTableWidgetItem, QFrame, QGroupBox,
+    QScrollArea, QWidget, QHeaderView, QAbstractItemView,
+    QSizePolicy
+)
+from PyQt5.QtCore import Qt
+from PyQt5.QtGui import QFont, QColor
 from app.utils import format_currency
-from app.constants import LOGO_FILE, QR_FILE
 
 
-# ── Amount in Words ──────────────────────────────────────────
-def amount_in_words(amount: float) -> str:
+def _build_metals_map() -> dict:
+    """purity.upper() → metal name, e.g. '22KT' → 'Gold'"""
     try:
-        ones = [
-            '', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven',
-            'Eight', 'Nine', 'Ten', 'Eleven', 'Twelve', 'Thirteen',
-            'Fourteen', 'Fifteen', 'Sixteen', 'Seventeen', 'Eighteen', 'Nineteen'
-        ]
-        tens = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty',
-                'Sixty', 'Seventy', 'Eighty', 'Ninety']
-
-        def words(n):
-            if n == 0:
-                return ''
-            elif n < 20:
-                return ones[n]
-            elif n < 100:
-                return tens[n // 10] + (' ' + ones[n % 10] if n % 10 else '')
-            elif n < 1000:
-                return ones[n // 100] + ' Hundred' + (' ' + words(n % 100) if n % 100 else '')
-            elif n < 100000:
-                return words(n // 1000) + ' Thousand' + (' ' + words(n % 1000) if n % 1000 else '')
-            elif n < 10000000:
-                return words(n // 100000) + ' Lakh' + (' ' + words(n % 100000) if n % 100000 else '')
-            else:
-                return words(n // 10000000) + ' Crore' + (' ' + words(n % 10000000) if n % 10000000 else '')
-
-        rupees = int(amount)
-        paise  = round((amount - rupees) * 100)
-        result = 'Rupees ' + words(rupees) if rupees else 'Rupees Zero'
-        if paise:
-            result += ' and ' + words(paise) + ' Paise'
-        return (result + ' Only').strip()
+        from services.metal_service import get_metals
+        return {m.get('purity', '').strip().upper(): m.get('name', '')
+                for m in get_metals() if m.get('purity')}
     except Exception:
-        return ''
+        return {}
 
 
-# ── Main PDF Generator ────────────────────────────────────────
-def save_invoice_as_pdf(invoice: dict, parent=None):
-    try:
-        inv_num      = invoice.get("invoice_number", "invoice").replace("/", "-")
-        default_name = f"Invoice_{inv_num}.pdf"
-
-        path, _ = QFileDialog.getSaveFileName(
-            parent, "Save Invoice as PDF", default_name, "PDF Files (*.pdf)"
-        )
-        if not path:
-            return
-
-        _generate_pdf(invoice, path)
-        QMessageBox.information(parent, "Invoice Saved", f"Invoice saved as PDF:\n{path}")
-        os.startfile(path)
-
-    except Exception as e:
-        traceback.print_exc()
-        QMessageBox.critical(parent, "Error", f"Could not generate invoice:\n{str(e)}")
+def _metal_label(purity: str, metals_map: dict) -> str:
+    metal = metals_map.get(purity.strip().upper(), '')
+    return f"{metal} {purity}".strip() if metal else purity
 
 
-def _generate_pdf(invoice: dict, path: str):
-    from reportlab.lib.pagesizes import A4
-    from reportlab.lib import colors
-    from reportlab.lib.units import mm
-    from reportlab.platypus import (
-        SimpleDocTemplate, Table, TableStyle,
-        Paragraph, Spacer, HRFlowable, Image as RLImage
+def _card(title: str) -> tuple:
+    """Return (QGroupBox, inner QVBoxLayout) styled as a card."""
+    grp = QGroupBox(title)
+    grp.setStyleSheet(
+        "QGroupBox{background:white;border:1px solid #e0e0e0;border-radius:6px;"
+        "margin-top:18px;padding-top:6px;font-weight:bold;font-size:12px;color:#2c3e50;}"
+        "QGroupBox::title{subcontrol-origin:margin;left:10px;padding:0 4px;}"
     )
-    from reportlab.lib.styles import ParagraphStyle
-    from reportlab.lib.enums import TA_CENTER, TA_RIGHT, TA_LEFT
+    lay = QVBoxLayout(grp)
+    lay.setContentsMargins(12, 8, 12, 10)
+    lay.setSpacing(6)
+    return grp, lay
 
-    # ── All data from AppConfig (settings) ───────────────────
-    shop = AppConfig.shop()
 
-    shop_name    = shop.get("shop_name", "")
-    tagline      = shop.get("tagline", "")
-    address      = shop.get("address", "")
-    mobile       = shop.get("mobile", "")
-    mobile2      = shop.get("mobile2", "")
-    state        = shop.get("state", "")
-    jurisdiction = shop.get("jurisdiction", "")
-    bank_name    = shop.get("bank_name", "")
-    acc_name     = shop.get("account_name", "")
-    acc_no       = shop.get("account_number", "")
-    branch       = shop.get("bank_branch", "")
-    ifsc         = shop.get("ifsc_code", "")
-    terms_text   = shop.get("terms", "")
-
-    # ── Invoice data ─────────────────────────────────────────
-    customer_name    = invoice.get("customer_name", "")
-    customer_address = invoice.get("customer_address", "")
-    customer_mobile  = invoice.get("customer_mobile", "")
-    customer_gst     = invoice.get("customer_gst", "")
-    inv_number       = invoice.get("invoice_number", "")
-    inv_date         = invoice.get("date", "")
-    items            = invoice.get("items", [])
-    subtotal         = float(invoice.get("subtotal", 0))
-    cgst_pct         = float(invoice.get("cgst_percent", 1.5))
-    sgst_pct         = float(invoice.get("sgst_percent", 1.5))
-    cgst_amt         = round(subtotal * cgst_pct / 100, 2)
-    sgst_amt         = round(subtotal * sgst_pct / 100, 2)
-    amt_after_gst    = round(subtotal + cgst_amt + sgst_amt, 2)
-    grand_total      = float(invoice.get("grand_total", amt_after_gst))
-    cash_paid        = float(invoice.get("cash_paid", 0))
-    due_amount       = float(invoice.get("due_amount", 0))
-    due_date         = invoice.get("due_date", "")
-    notes            = invoice.get("notes", "")
-
-    # ── Page setup ───────────────────────────────────────────
-    W = 190 * mm
-
-    doc = SimpleDocTemplate(
-        path, pagesize=A4,
-        rightMargin=10*mm, leftMargin=10*mm,
-        topMargin=8*mm, bottomMargin=8*mm
+def _kv_row(key: str, value: str, bold_val: bool = False) -> QHBoxLayout:
+    """One key : value row."""
+    row = QHBoxLayout()
+    lbl_k = QLabel(key + ":")
+    lbl_k.setStyleSheet("color:#7f8c8d; font-size:12px;")
+    lbl_k.setFixedWidth(130)
+    lbl_v = QLabel(value or "—")
+    lbl_v.setStyleSheet(
+        f"color:#2c3e50; font-size:12px;{'font-weight:bold;' if bold_val else ''}"
     )
+    lbl_v.setWordWrap(True)
+    row.addWidget(lbl_k)
+    row.addWidget(lbl_v, 1)
+    return row
 
-    # ── Style helpers ─────────────────────────────────────────
-    def S(name, **kw):
-        return ParagraphStyle(name, **kw)
 
-    s_ganesh   = S('g',  fontSize=8,  alignment=TA_CENTER, textColor=colors.HexColor('#8B0000'))
-    s_shopname = S('sn', fontSize=20, alignment=TA_CENTER, fontName='Helvetica-Bold',
-                   textColor=colors.HexColor('#8B0000'), spaceAfter=0, spaceBefore=0)
-    s_tagline  = S('tl', fontSize=9,  alignment=TA_CENTER, fontName='Helvetica-Oblique', spaceAfter=0)
-    s_address  = S('ad', fontSize=8,  alignment=TA_CENTER, spaceAfter=0)
-    s_mobile   = S('mb', fontSize=8,  alignment=TA_CENTER, fontName='Helvetica-Bold', spaceAfter=0)
-    s_tax_inv  = S('ti', fontSize=11, alignment=TA_CENTER, fontName='Helvetica-Bold',
-                   spaceBefore=2, spaceAfter=2)
-    s_normal   = S('nm', fontSize=8)
-    s_bold     = S('bd', fontSize=8,  fontName='Helvetica-Bold')
-    s_right    = S('rt', fontSize=8,  alignment=TA_RIGHT)
-    s_bold_r   = S('br', fontSize=8,  fontName='Helvetica-Bold', alignment=TA_RIGHT)
-    s_italic   = S('it', fontSize=8,  fontName='Helvetica-Oblique')
-    s_footer   = S('ft', fontSize=7,  alignment=TA_CENTER, textColor=colors.grey)
-    s_section  = S('sc', fontSize=8,  fontName='Helvetica-Bold')
-    s_terms    = S('tm', fontSize=7,  leading=10)
+class InvoiceDetailDialog(QDialog):
+    def __init__(self, invoice: dict, parent=None):
+        super().__init__(parent)
+        self._invoice = invoice
+        inv_no = invoice.get("invoice_number", "")
+        self.setWindowTitle(f"Invoice Details  —  {inv_no}")
+        self.setMinimumWidth(780)
+        self.setMinimumHeight(620)
+        self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+        self._build_ui()
 
-    def cell(txt, bold=False, align=TA_CENTER, size=7):
-        fn = 'Helvetica-Bold' if bold else 'Helvetica'
-        return Paragraph(str(txt), S('c', fontSize=size, alignment=align, fontName=fn, leading=9))
+    def _build_ui(self):
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
 
-    story = []
+        # ── Header bar ─────────────────────────────────────────
+        hdr = QFrame()
+        hdr.setStyleSheet("background:#2c3e50;")
+        hdr.setFixedHeight(54)
+        hl = QHBoxLayout(hdr)
+        hl.setContentsMargins(18, 0, 18, 0)
 
-    # ── HEADER: each element added one by one — NO overlap possible ──
-    if os.path.exists(LOGO_FILE):
-        try:
-            logo_tbl = Table([[RLImage(LOGO_FILE, width=20*mm, height=20*mm)]], colWidths=[W])
-            logo_tbl.setStyle(TableStyle([('ALIGN', (0,0), (-1,-1), 'CENTER')]))
-            story.append(logo_tbl)
-        except Exception:
-            pass
+        inv = self._invoice
+        inv_no   = inv.get("invoice_number", "")
+        inv_date = inv.get("date", "")
+        inv_time = inv.get("time", "")
 
-    story.append(Paragraph("|| श्री गणेशाय नमः ||", s_ganesh))
-    story.append(Spacer(1, 1*mm))
-    story.append(Paragraph(shop_name, s_shopname))
-    story.append(Spacer(1, 1*mm))
-    if tagline:
-        story.append(Paragraph(tagline, s_tagline))
-        story.append(Spacer(1, 1*mm))
-    if address:
-        story.append(Paragraph(address, s_address))
-        story.append(Spacer(1, 1*mm))
+        lbl_title = QLabel(f"Invoice  {inv_no}")
+        lbl_title.setFont(QFont("Segoe UI", 14, QFont.Bold))
+        lbl_title.setStyleSheet("color:white;")
 
-    mob_line = f"Mobile No.: {mobile}"
-    if mobile2:
-        mob_line += f"  &nbsp;&nbsp;  {mobile2}"
-    story.append(Paragraph(mob_line, s_mobile))
-    story.append(Spacer(1, 2*mm))
-    story.append(HRFlowable(width=W, thickness=1.5, color=colors.black, spaceAfter=2))
-    story.append(Paragraph("TAX INVOICE", s_tax_inv))
-    story.append(HRFlowable(width=W, thickness=0.5, color=colors.black, spaceAfter=3))
+        lbl_dt = QLabel(f"{inv_date}  {inv_time}")
+        lbl_dt.setStyleSheet("color:#bdc3c7; font-size:12px;")
 
-    # ── CUSTOMER + INVOICE META ───────────────────────────────
-    meta = [
-        [Paragraph(f"<b>Name :</b> {customer_name}", s_normal),
-         Paragraph(f"<b>Invoice Date :</b> {inv_date}", s_normal)],
-        [Paragraph(f"<b>Address :</b> {customer_address}", s_normal),
-         Paragraph(f"<b>Invoice No. :</b> {inv_number}", s_normal)],
-        [Paragraph(f"<b>Phone No. :</b> {customer_mobile}", s_normal),
-         Paragraph(f"<b>State :</b> {state}", s_normal)],
-        [Paragraph(f"<b>Customer GST No. :</b> {customer_gst}", s_normal),
-         Paragraph("Original Copy", s_bold_r)],
-    ]
-    meta_tbl = Table(meta, colWidths=[W * 0.55, W * 0.45])
-    meta_tbl.setStyle(TableStyle([
-        ('TOPPADDING',    (0, 0), (-1, -1), 2),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 2),
-        ('VALIGN',        (0, 0), (-1, -1), 'TOP'),
-    ]))
-    story.append(meta_tbl)
-    story.append(HRFlowable(width=W, thickness=0.5, color=colors.black, spaceBefore=3, spaceAfter=3))
+        hl.addWidget(lbl_title)
+        hl.addStretch()
+        hl.addWidget(lbl_dt)
+        outer.addWidget(hdr)
 
-    # ── ITEMS TABLE ───────────────────────────────────────────
-    col_headers = [
-        'S.No', 'Particulars /\nItem', 'HSN\nCode', 'Purity\nKt/Ct',
-        'Pcs /\nQty', 'Gross Wt.\n(In Gm)', 'Less Wt.\n(In Gm)',
-        'Nett Wt.\n(In Gm)', 'Rate\nPer Gm.', 'Mk/Oth.Chrg.\nPer Gm./Pcs.',
-        'Amount\n(INR)'
-    ]
-    col_w = [8*mm, 32*mm, 13*mm, 12*mm, 9*mm, 16*mm, 15*mm, 15*mm, 14*mm, 22*mm, 18*mm]
+        # ── Scrollable body ────────────────────────────────────
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setStyleSheet("background:#f5f6fa;")
 
-    rows      = [[cell(h, bold=True) for h in col_headers]]
-    gross_tot = 0.0
-    nett_tot  = 0.0
+        body = QWidget()
+        body.setStyleSheet("background:#f5f6fa;")
+        root = QVBoxLayout(body)
+        root.setContentsMargins(18, 14, 18, 14)
+        root.setSpacing(12)
+        scroll.setWidget(body)
+        outer.addWidget(scroll, 1)
 
-    for i, item in enumerate(items, 1):
-        gross_wt = float(item.get('weight', 0))
-        less_wt  = float(item.get('less_weight', 0))
-        nett_wt  = round(gross_wt - less_wt, 3)
-        rate     = float(item.get('rate', 0))
-        making   = float(item.get('making_charge', 0))
-        amt      = float(item.get('total', 0))
+        # ── Customer Details ───────────────────────────────────
+        cust_grp, cl = _card("Customer Details")
+        cust_left  = QVBoxLayout()
+        cust_right = QVBoxLayout()
 
-        gross_tot += gross_wt
-        nett_tot  += nett_wt
+        cust_left.addLayout(_kv_row("Name",    inv.get("customer_name",    ""), bold_val=True))
+        cust_left.addLayout(_kv_row("Mobile",  inv.get("customer_mobile",  "")))
+        cust_left.addLayout(_kv_row("Email",   inv.get("customer_email",   "")))
+        cust_left.addLayout(_kv_row("Address", inv.get("customer_address", "")))
 
-        making_str = f"{making:.2f}%" if making <= 100 else f"Rs{making:.2f}"
+        cust_right.addLayout(_kv_row("GST No.",  inv.get("customer_gst",     "")))
+        cust_right.addLayout(_kv_row("Aadhaar",  inv.get("customer_aadhaar", "")))
+        cust_right.addLayout(_kv_row("PAN No.",  inv.get("customer_pan",     "")))
 
-        rows.append([
-            cell(i),
-            cell(item.get('name', ''), align=TA_LEFT),
-            cell(item.get('hsn_code', '7113')),
-            cell(item.get('purity', '')),
-            cell(item.get('quantity', 1)),
-            cell(f"{gross_wt:.3f}"),
-            cell(f"{less_wt:.3f}"),
-            cell(f"{nett_wt:.3f}"),
-            cell(f"{rate:.0f}"),
-            cell(making_str),
-            cell(f"{amt:.2f}"),
+        cust_cols = QHBoxLayout()
+        cust_cols.setSpacing(20)
+
+        sep = QFrame(); sep.setFrameShape(QFrame.VLine)
+        sep.setStyleSheet("color:#e0e0e0;")
+
+        cust_cols.addLayout(cust_left, 3)
+        cust_cols.addWidget(sep)
+        cust_cols.addLayout(cust_right, 2)
+        cl.addLayout(cust_cols)
+        root.addWidget(cust_grp)
+
+        # ── Items Purchased ────────────────────────────────────
+        items_grp, il = _card("Items Purchased")
+        tbl = QTableWidget()
+        tbl.setColumnCount(11)
+        tbl.setHorizontalHeaderLabels([
+            "#", "Tag/RFID", "Item Name", "HUID/Remarks", "Purity", "Pcs",
+            "Gross Wt (g)", "Nett Wt (g)", "Rate ₹/g",
+            "Making ₹", "Total ₹"
         ])
-
-    # 2 empty rows for spacing
-    empty_row = [cell('') for _ in col_headers]
-    rows.append(empty_row)
-    rows.append(empty_row)
-
-    # Totals row
-    rows.append([
-        cell(''), cell('', bold=True), cell(''), cell(''), cell(''),
-        cell(f"{gross_tot:.3f}", bold=True),
-        cell(''),
-        cell(f"{nett_tot:.3f}", bold=True),
-        cell(''), cell(''),
-        cell(f"{subtotal:.2f}", bold=True),
-    ])
-
-    items_tbl = Table(rows, colWidths=col_w, repeatRows=1)
-    items_tbl.setStyle(TableStyle([
-        ('BACKGROUND',     (0, 0),  (-1, 0),  colors.HexColor('#e8e8e8')),
-        ('TEXTCOLOR',      (0, 0),  (-1, 0),  colors.black),
-        ('ALIGN',          (0, 0),  (-1, -1), 'CENTER'),
-        ('VALIGN',         (0, 0),  (-1, -1), 'MIDDLE'),
-        ('FONTSIZE',       (0, 0),  (-1, -1), 7),
-        ('GRID',           (0, 0),  (-1, -1), 0.4, colors.black),
-        ('TOPPADDING',     (0, 0),  (-1, -1), 2),
-        ('BOTTOMPADDING',  (0, 0),  (-1, -1), 2),
-        ('ROWBACKGROUNDS', (0, 1),  (-1, -2), [colors.white, colors.HexColor('#fffef0')]),
-        ('BACKGROUND',     (0, -1), (-1, -1), colors.HexColor('#f0f0f0')),
-        ('FONTNAME',       (0, -1), (-1, -1), 'Helvetica-Bold'),
-    ]))
-    story.append(items_tbl)
-    story.append(Spacer(1, 3*mm))
-
-    # ── PAYMENT + TOTALS ─────────────────────────────────────
-    pay_rows = [
-        [Paragraph('<b>Payment Detail :</b>', s_section), ''],
-        [Paragraph('Cash Payment',    s_normal), Paragraph(f'{cash_paid:.2f} /-',           S('pr',  fontSize=8, alignment=TA_RIGHT))],
-        [Paragraph('Total Payment -', s_normal), Paragraph(f'{cash_paid:.2f} /-',           S('pr2', fontSize=8, alignment=TA_RIGHT))],
-        [Paragraph('Due & Due date',  s_normal), Paragraph(f'{due_amount:.2f}  {due_date}', S('pr3', fontSize=8, alignment=TA_RIGHT))],
-    ]
-    pay_tbl = Table(pay_rows, colWidths=[35*mm, 30*mm])
-    pay_tbl.setStyle(TableStyle([
-        ('SPAN',          (0, 0), (1, 0)),
-        ('TOPPADDING',    (0, 0), (-1, -1), 3),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
-        ('FONTSIZE',      (0, 0), (-1, -1), 8),
-        ('ALIGN',         (1, 1), (1, -1),  'RIGHT'),
-    ]))
-
-    totals_rows = [
-        [Paragraph('Gross Amount',       s_normal), Paragraph(f': {subtotal:.2f}',      s_normal)],
-        [Paragraph(f'CGST@ {cgst_pct}%', s_normal), Paragraph(f': {cgst_amt:.2f}',     s_normal)],
-        [Paragraph(f'SGST@ {sgst_pct}%', s_normal), Paragraph(f': {sgst_amt:.2f}',     s_normal)],
-        [Paragraph('Amt After GST',       s_normal), Paragraph(f': {amt_after_gst:.2f}', s_normal)],
-        [Paragraph('Net Payable',         s_bold),   Paragraph(f': {grand_total:.2f}',   s_bold)],
-        [Paragraph('Dues',                s_normal), Paragraph(f': {due_amount:.2f}',    s_normal)],
-    ]
-    totals_tbl = Table(totals_rows, colWidths=[28*mm, 24*mm])
-    totals_tbl.setStyle(TableStyle([
-        ('TOPPADDING',    (0, 0), (-1, -1), 2),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 2),
-        ('FONTSIZE',      (0, 0), (-1, -1), 8),
-        ('LINEABOVE',     (0, 4), (-1, 4),  0.5, colors.black),
-    ]))
-
-    bottom_tbl = Table([[pay_tbl, totals_tbl]], colWidths=[95*mm, 95*mm])
-    bottom_tbl.setStyle(TableStyle([
-        ('VALIGN',     (0, 0), (-1, -1), 'TOP'),
-        ('TOPPADDING', (0, 0), (-1, -1), 2),
-    ]))
-    story.append(bottom_tbl)
-    story.append(HRFlowable(width=W, thickness=0.5, color=colors.black, spaceBefore=3, spaceAfter=3))
-
-    # ── AMOUNT IN WORDS ───────────────────────────────────────
-    story.append(Paragraph("<b>Amount In Word</b>", s_section))
-    story.append(Paragraph(amount_in_words(grand_total), s_italic))
-    story.append(HRFlowable(width=W, thickness=0.5, color=colors.black, spaceBefore=3, spaceAfter=3))
-
-    # ── BANK DETAILS + QR + CUSTOMER SIGNATURE ───────────────
-    bank_lines = (
-        f"<b>Bank Details :</b><br/>"
-        f"Bank Name :- {bank_name}<br/>"
-        f"A/c Name :- {acc_name}<br/>"
-        f"A/c No. :- {acc_no}<br/>"
-        f"Branch {branch}<br/>"
-        f"IFSC :- {ifsc}"
-    )
-
-    if os.path.exists(QR_FILE):
-        try:
-            qr_cell = [RLImage(QR_FILE, width=30*mm, height=30*mm)]
-        except Exception:
-            qr_cell = [Paragraph("", s_normal)]
-    else:
-        qr_cell = [Paragraph("", s_normal)]
-
-    bank_sig = [[
-        Paragraph(bank_lines, s_normal),
-        qr_cell,
-        Paragraph("Customer's Signature", s_right)
-    ]]
-    bank_tbl = Table(bank_sig, colWidths=[W * 0.45, 35*mm, W * 0.30])
-    bank_tbl.setStyle(TableStyle([
-        ('VALIGN',        (0, 0), (0, 0),   'TOP'),
-        ('VALIGN',        (1, 0), (1, 0),   'MIDDLE'),
-        ('VALIGN',        (2, 0), (2, 0),   'BOTTOM'),
-        ('ALIGN',         (1, 0), (1, 0),   'CENTER'),
-        ('TOPPADDING',    (0, 0), (-1, -1), 3),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
-    ]))
-    story.append(bank_tbl)
-    story.append(HRFlowable(width=W, thickness=0.5, color=colors.black, spaceBefore=3, spaceAfter=3))
-
-    # ── TERMS & CONDITIONS ────────────────────────────────────
-    if terms_text.strip():
-        story.append(Paragraph("<b>Terms & Condition of Sale</b>", s_section))
-        for line in terms_text.split('\n'):
-            if line.strip():
-                story.append(Paragraph(line.strip(), s_terms))
-        story.append(Spacer(1, 3*mm))
-
-    if notes.strip():
-        story.append(Paragraph(f"<b>Notes:</b> {notes}", s_normal))
-        story.append(Spacer(1, 2*mm))
-
-    # ── FOOTER ───────────────────────────────────────────────
-    story.append(HRFlowable(width=W, thickness=0.5, color=colors.grey, spaceAfter=2))
-    if jurisdiction:
-        story.append(Paragraph(f"SUBJECT TO {jurisdiction.upper()} JURISDICTION", s_footer))
-    story.append(Paragraph("NOTE :- FOR ANY TYPE OF EXCHANGE OR SALE THE BILL IS COMPULSORY.", s_footer))
-    story.append(Spacer(1, 4*mm))
-
-    sign_tbl = Table([['', Paragraph("Sign & Seal", S('ss', fontSize=8, alignment=TA_RIGHT, fontName='Helvetica-Bold'))]], colWidths=[W * 0.7, W * 0.3])
-    story.append(sign_tbl)
-
-    doc.build(story)
-
-
-# ── Print via Qt (fallback to PDF) ───────────────────────────
-def print_invoice(invoice: dict, parent=None, preview=True):
-    try:
-        from PyQt5.QtPrintSupport import QPrinter, QPrintPreviewDialog, QPrintDialog
-        from PyQt5.QtGui import QTextDocument
-        from PyQt5.QtCore import QSizeF
-
-        html = _build_html_preview(invoice)
-        doc  = QTextDocument()
-        doc.setHtml(html)
-        doc.setPageSize(QSizeF(595, 842))
-
-        printer = QPrinter(QPrinter.HighResolution)
-        printer.setPageSize(QPrinter.A4)
-
-        if preview:
-            dialog = QPrintPreviewDialog(printer, parent)
-            dialog.setWindowTitle("Invoice Print Preview")
-            dialog.paintRequested.connect(doc.print)
-            dialog.exec()
-        else:
-            dialog = QPrintDialog(printer, parent)
-            if dialog.exec() == QPrintDialog.Accepted:
-                doc.print(printer)
-
-    except Exception:
-        traceback.print_exc()
-        reply = QMessageBox.question(
-            parent, "Printer Not Available",
-            "Could not open print dialog.\nSave as PDF instead?",
-            QMessageBox.Yes | QMessageBox.No
+        tbl.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
+        for col, w in {0: 28, 1: 90, 3: 110, 4: 72, 5: 40, 6: 86, 7: 86, 8: 76, 9: 86, 10: 100}.items():
+            tbl.setColumnWidth(col, w)
+            tbl.horizontalHeader().setSectionResizeMode(col, QHeaderView.Fixed)
+        tbl.verticalHeader().setVisible(False)
+        tbl.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        tbl.setSelectionBehavior(QAbstractItemView.SelectRows)
+        tbl.setAlternatingRowColors(True)
+        tbl.setStyleSheet(
+            "QTableWidget{border:1px solid #e0e0e0;border-radius:4px;}"
+            "QHeaderView::section{background:#34495e;color:white;font-weight:bold;"
+            "font-size:11px;padding:5px;border:none;}"
         )
-        if reply == QMessageBox.Yes:
-            save_invoice_as_pdf(invoice, parent)
 
+        items      = inv.get("items", [])
+        metals_map = _build_metals_map()
 
-def _build_html_preview(invoice: dict) -> str:
-    shop  = AppConfig.shop()
-    items = invoice.get("items", [])
-    rows  = ""
-    for i, item in enumerate(items, 1):
-        rows += (
-            f"<tr>"
-            f"<td>{i}</td><td>{item.get('name','')}</td>"
-            f"<td>{item.get('purity','')}</td>"
-            f"<td>{item.get('quantity','')}</td>"
-            f"<td>{item.get('weight','')}</td>"
-            f"<td>{item.get('less_weight',0)}</td>"
-            f"<td>{format_currency(item.get('rate',0))}</td>"
-            f"<td>{format_currency(item.get('making_charge',0))}</td>"
-            f"<td><b>{format_currency(item.get('total',0))}</b></td>"
-            f"</tr>"
+        def _item_metal(purity: str) -> str:
+            metal = metals_map.get(purity.strip().upper(), '')
+            return metal if metal else purity
+
+        # Group items by metal name (Gold, Silver, …)
+        groups = OrderedDict()
+        for it in items:
+            p  = (it.get('purity') or 'Other').strip()
+            mn = _item_metal(p)
+            groups.setdefault(mn, []).append(it)
+
+        SUBT_BG = QColor('#e4e4e4')
+        SUBT_FG = QColor('#2c3e50')
+
+        row_idx    = 0
+        serial     = 0
+        total_rows = len(items) + len(groups)   # always one total row per metal
+        tbl.setRowCount(total_rows)
+
+        for metal_name, grp_items in groups.items():
+            gw_grp = nw_grp = amt_grp = 0.0
+
+            for it in grp_items:
+                gw  = float(it.get("weight",        0))
+                lw  = float(it.get("less_weight",   0))
+                nw  = round(gw - lw, 3)
+                mk  = float(it.get("making_charge", 0))
+                amt = float(it.get("total",         0))
+                gw_grp += gw; nw_grp += nw; amt_grp += amt
+                serial += 1
+
+                vals = [
+                    str(serial),
+                    it.get("tag",  ""),
+                    it.get("name", ""),
+                    it.get("huid", ""),
+                    it.get("purity", ""),
+                    str(it.get("quantity", 1)),
+                    f"{gw:.3f}",
+                    f"{nw:.3f}",
+                    f"{float(it.get('rate', 0)):.2f}",
+                    f"{mk:,.2f}",
+                    f"{amt:,.2f}",
+                ]
+                for c, v in enumerate(vals):
+                    cell = QTableWidgetItem(v)
+                    cell.setTextAlignment(Qt.AlignCenter)
+                    if c == 2:
+                        cell.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+                    if c == 10:
+                        cell.setForeground(QColor("#27ae60"))
+                        cell.setFont(QFont("Segoe UI", 9, QFont.Bold))
+                    tbl.setItem(row_idx, c, cell)
+                row_idx += 1
+
+            # Metal total row — always shown
+            lbl = f"{metal_name} Total"
+            sub_vals = [
+                "", lbl, "", "", "", "",
+                f"{gw_grp:.3f}",
+                f"{nw_grp:.3f}",
+                "", "",
+                f"{amt_grp:,.2f}",
+            ]
+            for c, v in enumerate(sub_vals):
+                cell = QTableWidgetItem(v)
+                cell.setTextAlignment(Qt.AlignCenter)
+                cell.setBackground(SUBT_BG)
+                cell.setForeground(SUBT_FG)
+                cell.setFont(QFont("Segoe UI", 9, QFont.Bold))
+                if c == 1:
+                    cell.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+                if c == 10:
+                    cell.setForeground(QColor("#27ae60"))
+                tbl.setItem(row_idx, c, cell)
+            tbl.setRowHeight(row_idx, 28)
+            row_idx += 1
+
+        tbl.setMinimumHeight(min(42 * max(total_rows, 1) + 40, 320))
+        il.addWidget(tbl)
+        root.addWidget(items_grp)
+
+        # ── Payment & Totals (side-by-side) ────────────────────
+        pt_row = QHBoxLayout(); pt_row.setSpacing(12)
+
+        # Payment Details
+        pay_grp, pl = _card("Payment Details")
+        def _prow(label, val):
+            if float(val or 0) == 0 and label not in ("Due Amount",):
+                return
+            pl.addLayout(_kv_row(label, f"₹ {float(val or 0):,.2f}"))
+
+        _prow("Cash Paid",   inv.get("cash_paid",   0))
+        _prow("Card Paid",   inv.get("card_paid",   0))
+        if inv.get("card_details"):
+            pl.addLayout(_kv_row("Card Details", inv.get("card_details", "")))
+        _prow("Cheque Paid", inv.get("cheque_paid", 0))
+        if inv.get("cheque_details"):
+            pl.addLayout(_kv_row("Cheque Details", inv.get("cheque_details", "")))
+        _prow("UPI Paid",    inv.get("upi_paid",    0))
+        _prow("Due Amount",  inv.get("due_amount",  0))
+        if inv.get("due_date"):
+            pl.addLayout(_kv_row("Due Date", inv.get("due_date", "")))
+        if inv.get("remarks"):
+            pl.addLayout(_kv_row("Remarks",  inv.get("remarks",  "")))
+        pl.addStretch()
+        pt_row.addWidget(pay_grp, 3)
+
+        # Tax & Grand Total
+        tax_grp, tl = _card("Tax & Total")
+
+        def _trow(label, val, bold=False, color=None):
+            row = QHBoxLayout()
+            lk = QLabel(label + ":")
+            lk.setStyleSheet(f"color:#7f8c8d;font-size:12px;{'font-weight:bold;' if bold else ''}")
+            lk.setFixedWidth(140)
+            lv = QLabel(str(val))
+            style = f"font-size:12px;{'font-weight:bold;' if bold else ''}"
+            if color:
+                style += f"color:{color};"
+            lv.setStyleSheet(style)
+            lv.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            row.addWidget(lk)
+            row.addWidget(lv, 1)
+            return row
+
+        subtotal = float(inv.get("subtotal",    0))
+        cgst_pct = float(inv.get("cgst_percent", 0))
+        sgst_pct = float(inv.get("sgst_percent", 0))
+        igst_pct = float(inv.get("igst_percent", 0))
+        cgst_amt = float(inv.get("cgst_amount",  round(subtotal * cgst_pct / 100, 2)))
+        sgst_amt = float(inv.get("sgst_amount",  round(subtotal * sgst_pct / 100, 2)))
+        igst_amt = float(inv.get("igst_amount",  round(subtotal * igst_pct / 100, 2)))
+        grand    = float(inv.get("grand_total",  0))
+
+        tl.addLayout(_trow("Gross Amount",        format_currency(subtotal)))
+        tl.addLayout(_trow(f"CGST ({cgst_pct}%)", format_currency(cgst_amt)))
+        tl.addLayout(_trow(f"SGST ({sgst_pct}%)", format_currency(sgst_amt)))
+        if igst_pct or igst_amt:
+            tl.addLayout(_trow(f"IGST ({igst_pct}%)", format_currency(igst_amt)))
+
+        sep2 = QFrame(); sep2.setFrameShape(QFrame.HLine)
+        sep2.setStyleSheet("color:#e0e0e0;")
+        tl.addWidget(sep2)
+        tl.addLayout(_trow("NET PAYABLE", format_currency(grand), bold=True, color="#27ae60"))
+        tl.addStretch()
+        pt_row.addWidget(tax_grp, 2)
+
+        root.addLayout(pt_row)
+
+        # Notes
+        if inv.get("notes"):
+            notes_grp, nl = _card("Notes")
+            nl.addWidget(QLabel(inv.get("notes", "")))
+            root.addWidget(notes_grp)
+
+        # ── Footer buttons ─────────────────────────────────────
+        foot = QFrame()
+        foot.setStyleSheet("background:white; border-top:1px solid #e0e0e0;")
+        foot.setFixedHeight(56)
+        fl = QHBoxLayout(foot)
+        fl.setContentsMargins(18, 8, 18, 8)
+
+        btn_pdf = QPushButton("🖨  Download PDF")
+        btn_pdf.setStyleSheet(
+            "QPushButton{background:#f39c12;color:white;border-radius:5px;"
+            "padding:9px 20px;font-weight:bold;border:none;}"
+            "QPushButton:hover{background:#e67e22;}"
         )
-    subtotal = invoice.get('subtotal', 0)
-    cgst_pct = invoice.get('cgst_percent', 1.5)
-    sgst_pct = invoice.get('sgst_percent', 1.5)
-    cgst_amt = round(subtotal * cgst_pct / 100, 2)
-    sgst_amt = round(subtotal * sgst_pct / 100, 2)
-    grand    = invoice.get('grand_total', 0)
+        btn_pdf.clicked.connect(self._download_pdf)
 
-    return f"""<html><body style="font-family:Arial;font-size:11px;margin:20px">
-    <h2 style="text-align:center;color:#8B0000">{shop.get('shop_name','')}</h2>
-    <p style="text-align:center">{shop.get('tagline','')}</p>
-    <p style="text-align:center">{shop.get('address','')} | {shop.get('mobile','')}</p>
-    <h3 style="text-align:center">TAX INVOICE</h3>
-    <p><b>Invoice No:</b> {invoice.get('invoice_number','')} &nbsp;&nbsp;
-       <b>Date:</b> {invoice.get('date','')}</p>
-    <p><b>Customer:</b> {invoice.get('customer_name','')} &nbsp;&nbsp;
-       <b>Mobile:</b> {invoice.get('customer_mobile','')}</p>
-    <table width="100%" border="1" cellspacing="0" cellpadding="4">
-    <tr style="background:#e8e8e8;color:black">
-        <th>#</th><th>Item</th><th>Purity</th><th>Qty</th>
-        <th>Gross Wt</th><th>Less Wt</th><th>Rate</th><th>Making</th><th>Amount</th>
-    </tr>{rows}
-    </table>
-    <br>
-    <p style="text-align:right">Gross Amount: {format_currency(subtotal)}</p>
-    <p style="text-align:right">CGST @{cgst_pct}%: {format_currency(cgst_amt)}</p>
-    <p style="text-align:right">SGST @{sgst_pct}%: {format_currency(sgst_amt)}</p>
-    <p style="text-align:right"><b>Net Payable: {format_currency(grand)}</b></p>
-    <p><i>{amount_in_words(grand)}</i></p>
-    </body></html>"""
+        btn_close = QPushButton("Close")
+        btn_close.setStyleSheet(
+            "QPushButton{background:#7f8c8d;color:white;border-radius:5px;"
+            "padding:9px 20px;border:none;}"
+            "QPushButton:hover{background:#95a5a6;}"
+        )
+        btn_close.clicked.connect(self.accept)
+
+        fl.addStretch()
+        fl.addWidget(btn_pdf)
+        fl.addWidget(btn_close)
+        outer.addWidget(foot)
+
+    def _download_pdf(self):
+        from app.printer_helper import save_invoice_as_pdf
+        save_invoice_as_pdf(self._invoice, parent=self)

@@ -17,10 +17,29 @@ import csv, os
 from datetime import date
 
 
+_RPT_LABELS = [
+    "Invoice No", "Date", "Time",
+    "Customer", "Mobile", "Subtotal", "Tax", "Grand Total", "Action"
+]
+_RPT_HEADERS = [
+    "Invoice No ▲▼", "Date ▲▼", "Time ▲▼",
+    "Customer ▲▼", "Mobile ▲▼", "Subtotal ▲▼", "Tax ▲▼", "Grand Total ▲▼", "Action"
+]
+# col index → invoice dict key (for sorting)
+_RPT_SORT_KEYS = {
+    0: "invoice_number", 1: "date", 2: "time",
+    3: "customer_name",  4: "customer_mobile",
+    5: "subtotal",       6: "tax_amount", 7: "grand_total",
+}
+
+
 class SalesReportPage(QWidget):
     def __init__(self, history_mode: bool = False):
         super().__init__()
         self.history_mode = history_mode
+        self._sort_col = -1   # -1 = no sort
+        self._sort_asc = True
+        self._data_base: list[dict] = []   # unsorted current data
         self._build_ui()
 
     def _build_ui(self):
@@ -94,10 +113,9 @@ class SalesReportPage(QWidget):
         # ── Table ─────────────────────────────────────────────
         self.tbl = QTableWidget()
         self.tbl.setColumnCount(9)
-        self.tbl.setHorizontalHeaderLabels([
-            "Invoice No", "Date", "Time",
-            "Customer", "Mobile", "Subtotal", "Tax", "Grand Total", "Action"
-        ])
+        self.tbl.setHorizontalHeaderLabels(_RPT_HEADERS)
+        self.tbl.horizontalHeader().sectionClicked.connect(self._on_header_click)
+        self.tbl.horizontalHeader().setCursor(Qt.PointingHandCursor)
         self.tbl.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
         self.tbl.verticalHeader().setDefaultSectionSize(42)
         self.tbl.setSelectionBehavior(QAbstractItemView.SelectRows)
@@ -147,7 +165,8 @@ class SalesReportPage(QWidget):
 
     def _show_all(self):
         self._all_invoices = get_all_invoices()
-        self._data = self._all_invoices
+        self._data_base = self._all_invoices
+        self._data = self._apply_sort(self._data_base)
         self._populate(self._data)
 
     def _on_search_text_changed(self, text):
@@ -172,8 +191,51 @@ class SalesReportPage(QWidget):
                 
             filtered.append(inv)
             
-        self._data = filtered
+        self._data_base = filtered
+        self._data = self._apply_sort(self._data_base)
         self._populate(self._data)
+
+    # ── Column sort ───────────────────────────────────────────
+    def _on_header_click(self, col: int):
+        if col == 8:   # Action column — not sortable
+            return
+        if self._sort_col == col:
+            if not self._sort_asc:
+                self._sort_asc = True                  # desc → asc
+            else:
+                self._sort_col = -1                    # asc → remove
+                self._refresh_sort_headers()
+                self._data = list(self._data_base)
+                self._populate(self._data)
+                return
+        else:
+            self._sort_col = col
+            self._sort_asc = False                     # first click → descending
+
+        self._refresh_sort_headers()
+        self._data = self._apply_sort(self._data_base)
+        self._populate(self._data)
+
+    def _apply_sort(self, data: list) -> list:
+        if self._sort_col < 0 or self._sort_col not in _RPT_SORT_KEYS:
+            return list(data)
+        key = _RPT_SORT_KEYS[self._sort_col]
+        def _k(inv):
+            v = inv.get(key, "")
+            try:    return (0, float(v))
+            except: return (1, str(v).lower())
+        return sorted(data, key=_k, reverse=not self._sort_asc)
+
+    def _refresh_sort_headers(self):
+        for i, lbl in enumerate(_RPT_LABELS):
+            item = self.tbl.horizontalHeaderItem(i)
+            if item:
+                if i == self._sort_col:
+                    item.setText(lbl + (" ▲" if self._sort_asc else " ▼"))
+                elif i == 8:
+                    item.setText(lbl)       # Action column — no sort indicator
+                else:
+                    item.setText(lbl + " ▲▼")
 
     def _populate(self, invoices: list):
         self.tbl.setRowCount(0)
@@ -196,15 +258,25 @@ class SalesReportPage(QWidget):
                 cell.setTextAlignment(Qt.AlignCenter)
                 self.tbl.setItem(r, c, cell)
 
-            # Action button
-            btn_dl = QPushButton("Download")
-            btn_dl.setStyleSheet("background:#27ae60; color:white; padding: 4px 8px; border-radius:3px; font-weight:bold; font-size:11px;")
+            # Action buttons: View + Download
+            btn_view = QPushButton("View")
+            btn_view.setStyleSheet(
+                "background:#2980b9;color:white;padding:4px 8px;"
+                "border-radius:3px;font-weight:bold;font-size:11px;border:none;")
+            btn_view.clicked.connect(lambda checked, i=inv: self._open_detail(i))
+
+            btn_dl = QPushButton("PDF")
+            btn_dl.setStyleSheet(
+                "background:#27ae60;color:white;padding:4px 8px;"
+                "border-radius:3px;font-weight:bold;font-size:11px;border:none;")
             btn_dl.clicked.connect(lambda checked, i=inv: save_invoice_as_pdf(i, parent=self))
-            
+
             btn_container = QWidget()
             btn_layout = QHBoxLayout(btn_container)
-            btn_layout.setContentsMargins(0, 0, 0, 0)
+            btn_layout.setContentsMargins(2, 2, 2, 2)
+            btn_layout.setSpacing(4)
             btn_layout.setAlignment(Qt.AlignCenter)
+            btn_layout.addWidget(btn_view)
             btn_layout.addWidget(btn_dl)
             self.tbl.setCellWidget(r, 8, btn_container)
 
@@ -215,14 +287,16 @@ class SalesReportPage(QWidget):
         self.lbl_total.setText(f"Total Sales: {format_currency(total_sales)}")
         self.lbl_tax.setText(f"Total Tax: {format_currency(total_tax)}")
 
+    def _open_detail(self, inv: dict):
+        from ui.invoice_detail_dialog import InvoiceDetailDialog
+        dlg = InvoiceDetailDialog(inv, self)
+        dlg.exec()
+
     def _view_invoice(self):
         row = self.tbl.currentRow()
         if row < 0 or row >= len(self._data):
             return
-        inv = self._data[row]
-        from ui.invoice_detail_dialog import InvoiceDetailDialog
-        dlg = InvoiceDetailDialog(inv, self)
-        dlg.exec()
+        self._open_detail(self._data[row])
 
     def _reprint(self):
         row = self.tbl.currentRow()

@@ -12,9 +12,24 @@ from app.utils import format_currency
 from app.printer_helper import save_invoice_as_pdf
 
 
+_C_HEADERS  = ["ID", "Name ▲▼", "Mobile ▲▼", "Address ▲▼", "Email ▲▼"]
+_C_LABELS   = ["ID", "Name", "Mobile", "Address", "Email"]   # base labels (no indicator)
+_C_KEYS     = ["customer_id", "customer_name", "mobile", "address", "email"]
+_I_HEADERS  = ["Invoice No ▲▼", "Date ▲▼", "Items ▲▼", "Tax ▲▼", "Grand Total ▲▼", "Action"]
+_I_LABELS   = ["Invoice No", "Date", "Items", "Tax", "Grand Total", "Action"]
+# col → invoice key (col 2 = item count is handled specially)
+_I_SORT_KEYS = {0: "invoice_number", 1: "date", 3: "tax_amount", 4: "grand_total"}
+
+
 class CustomerPage(QWidget):
     def __init__(self):
         super().__init__()
+        # Sort state for customers table
+        self._c_sort_col = -1;  self._c_sort_asc = True
+        # Sort state for invoice history table
+        self._i_sort_col = -1;  self._i_sort_asc = True
+        self._view_c: list[dict] = []   # current filtered customers (unsorted)
+        self._view_i: list[dict] = []   # current customer's invoices (unsorted)
         self._build_ui()
 
     def _build_ui(self):
@@ -31,11 +46,15 @@ class CustomerPage(QWidget):
         sr.addWidget(QLabel("🔍")); sr.addWidget(self.txt_s); root.addLayout(sr)
 
         # Customers table
-        clbl = QLabel("Customers"); clbl.setStyleSheet("font-weight:bold;")
+        clbl = QLabel("Customers  —  click a column header to sort")
+        clbl.setStyleSheet("font-weight:bold; color:#555; font-size:11px;")
         root.addWidget(clbl)
         self.tbl_c = QTableWidget(); self.tbl_c.setColumnCount(5)
-        self.tbl_c.setHorizontalHeaderLabels(["ID","Name","Mobile","Address","Email"])
-        self.tbl_c.horizontalHeader().setSectionResizeMode(1,QHeaderView.Stretch)
+        self.tbl_c.setHorizontalHeaderLabels(_C_HEADERS)
+        hc = self.tbl_c.horizontalHeader()
+        hc.setSectionResizeMode(1, QHeaderView.Stretch)
+        hc.setCursor(Qt.PointingHandCursor)
+        hc.sectionClicked.connect(self._sort_customers)
         self.tbl_c.verticalHeader().setDefaultSectionSize(42)
         self.tbl_c.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.tbl_c.setSelectionBehavior(QAbstractItemView.SelectRows)
@@ -44,15 +63,21 @@ class CustomerPage(QWidget):
         root.addWidget(self.tbl_c)
 
         act = QHBoxLayout(); act.addStretch()
-        btn_del = QPushButton("🗑  Delete"); btn_del.setStyleSheet("background:#e74c3c;color:white;border-radius:4px;padding:8px 16px;"); btn_del.clicked.connect(self._delete)
+        btn_del = QPushButton("🗑  Delete")
+        btn_del.setStyleSheet("background:#e74c3c;color:white;border-radius:4px;padding:8px 16px;")
+        btn_del.clicked.connect(self._delete)
         act.addWidget(btn_del); root.addLayout(act)
 
         # Invoice history
-        ilbl = QLabel("Invoice History for Selected Customer"); ilbl.setStyleSheet("font-weight:bold;")
+        ilbl = QLabel("Invoice History for Selected Customer  —  click a column header to sort")
+        ilbl.setStyleSheet("font-weight:bold; color:#555; font-size:11px;")
         root.addWidget(ilbl)
         self.tbl_i = QTableWidget(); self.tbl_i.setColumnCount(6)
-        self.tbl_i.setHorizontalHeaderLabels(["Invoice No","Date","Items","Tax","Grand Total", "Action"])
-        self.tbl_i.horizontalHeader().setSectionResizeMode(0,QHeaderView.Stretch)
+        self.tbl_i.setHorizontalHeaderLabels(_I_HEADERS)
+        hi = self.tbl_i.horizontalHeader()
+        hi.setSectionResizeMode(0, QHeaderView.Stretch)
+        hi.setCursor(Qt.PointingHandCursor)
+        hi.sectionClicked.connect(self._sort_invoices)
         self.tbl_i.verticalHeader().setDefaultSectionSize(42)
         self.tbl_i.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.tbl_i.setAlternatingRowColors(True); self.tbl_i.setMinimumHeight(180)
@@ -62,32 +87,133 @@ class CustomerPage(QWidget):
 
     def refresh(self):
         self._all_c = get_all_customers(); self._all_inv = get_all_invoices()
-        self._populate(self._all_c)
+        self._view_c = self._all_c
+        self._populate_customers(self._apply_c_sort(self._view_c))
 
     def _search(self, text):
         q = text.lower()
         if len(q) < 3 and len(q) > 0: return
-        self._populate([c for c in self._all_c if q in f"{c.get('customer_name','')} {c.get('mobile','')} {c.get('email','')} {c.get('address','')}".lower()])
+        self._view_c = [
+            c for c in self._all_c
+            if q in f"{c.get('customer_name','')} {c.get('mobile','')} "
+                    f"{c.get('email','')} {c.get('address','')}".lower()
+        ]
+        self._populate_customers(self._apply_c_sort(self._view_c))
 
-    def _populate(self, data):
+    def _populate_customers(self, data):
         self.tbl_c.setRowCount(0); self.tbl_i.setRowCount(0)
         for c in data:
             r = self.tbl_c.rowCount(); self.tbl_c.insertRow(r)
-            for col, key in enumerate(["customer_id","customer_name","mobile","address","email"]):
-                cell = QTableWidgetItem(str(c.get(key,""))); cell.setTextAlignment(Qt.AlignCenter)
-                self.tbl_c.setItem(r,col,cell)
-        self.tbl_c.setColumnHidden(0,True)
+            for col, key in enumerate(_C_KEYS):
+                cell = QTableWidgetItem(str(c.get(key, "")))
+                cell.setTextAlignment(Qt.AlignCenter)
+                self.tbl_c.setItem(r, col, cell)
+        self.tbl_c.setColumnHidden(0, True)
+
+    # kept for backward-compat calls
+    def _populate(self, data):
+        self._view_c = data
+        self._populate_customers(self._apply_c_sort(data))
 
     def _customer_selected(self):
         row = self.tbl_c.currentRow()
-        if row < 0: self.tbl_i.setRowCount(0); return
+        if row < 0:
+            self._view_i = []
+            self.tbl_i.setRowCount(0)
+            return
         mobile = self.tbl_c.item(row,2).text() if self.tbl_c.item(row,2) else ""
         name   = self.tbl_c.item(row,1).text() if self.tbl_c.item(row,1) else ""
-        invs   = [i for i in self._all_inv if
-                  (mobile and i.get("customer_mobile","") == mobile) or
-                  (name and i.get("customer_name","").lower() == name.lower())]
+        self._view_i = [i for i in self._all_inv if
+                        (mobile and i.get("customer_mobile","") == mobile) or
+                        (name and i.get("customer_name","").lower() == name.lower())]
+        self._i_sort_col = -1; self._i_sort_asc = True
+        self._refresh_i_headers()
+        self._populate_invoices(self._view_i)
+
+    # ── Customer table sort ───────────────────────────────────
+    def _sort_customers(self, col: int):
+        if col == 0:   # ID column hidden — skip
+            return
+        if self._c_sort_col == col:
+            if not self._c_sort_asc:        # desc → asc
+                self._c_sort_asc = True
+            else:                           # asc → remove sort
+                self._c_sort_col = -1
+                self._refresh_c_headers()
+                self._populate_customers(self._view_c)
+                return
+        else:
+            self._c_sort_col = col
+            self._c_sort_asc = False        # first click → descending
+        self._refresh_c_headers()
+        self._populate_customers(self._apply_c_sort(self._view_c))
+
+    def _apply_c_sort(self, data: list) -> list:
+        if self._c_sort_col < 0 or self._c_sort_col >= len(_C_KEYS):
+            return list(data)
+        key = _C_KEYS[self._c_sort_col]
+        return sorted(data, key=lambda c: str(c.get(key, "")).lower(),
+                      reverse=not self._c_sort_asc)
+
+    def _refresh_c_headers(self):
+        for i, lbl in enumerate(_C_LABELS):
+            item = self.tbl_c.horizontalHeaderItem(i)
+            if item:
+                if i == self._c_sort_col:
+                    item.setText(lbl + (" ▲" if self._c_sort_asc else " ▼"))
+                elif i == 0:
+                    item.setText(lbl)       # ID column — no sort indicator
+                else:
+                    item.setText(lbl + " ▲▼")
+
+    # ── Invoice history sort ──────────────────────────────────
+    def _sort_invoices(self, col: int):
+        if col == 5:   # Action column — not sortable
+            return
+        if self._i_sort_col == col:
+            if not self._i_sort_asc:        # desc → asc
+                self._i_sort_asc = True
+            else:                           # asc → remove sort
+                self._i_sort_col = -1
+                self._refresh_i_headers()
+                self._populate_invoices(self._view_i)
+                return
+        else:
+            self._i_sort_col = col
+            self._i_sort_asc = False        # first click → descending
+        self._refresh_i_headers()
+        self._populate_invoices(self._apply_i_sort(self._view_i))
+
+    def _apply_i_sort(self, data: list) -> list:
+        if self._i_sort_col < 0:
+            return list(data)
+        if self._i_sort_col == 2:   # Items column = count
+            return sorted(data, key=lambda i: len(i.get("items", [])),
+                          reverse=not self._i_sort_asc)
+        if self._i_sort_col not in _I_SORT_KEYS:
+            return list(data)
+        key = _I_SORT_KEYS[self._i_sort_col]
+        def _k(inv):
+            v = inv.get(key, "")
+            try:    return (0, float(v))
+            except: return (1, str(v).lower())
+        return sorted(data, key=_k, reverse=not self._i_sort_asc)
+
+    def _refresh_i_headers(self):
+        for i, lbl in enumerate(_I_LABELS):
+            item = self.tbl_i.horizontalHeaderItem(i)
+            if item:
+                if i == self._i_sort_col:
+                    item.setText(lbl + (" ▲" if self._i_sort_asc else " ▼"))
+                elif i == 5:
+                    item.setText(lbl)       # Action column — no sort indicator
+                else:
+                    item.setText(lbl + " ▲▼")
+
+    # ── Invoice history population ────────────────────────────
+    def _populate_invoices(self, invoices: list):
         self.tbl_i.setRowCount(0)
-        for inv in invs:
+        for inv in invoices:
             r = self.tbl_i.rowCount(); self.tbl_i.insertRow(r)
             vals = [inv.get("invoice_number",""), inv.get("date",""),
                     str(len(inv.get("items",[]))),
@@ -95,12 +221,12 @@ class CustomerPage(QWidget):
                     format_currency(inv.get("grand_total",0))]
             for c, v in enumerate(vals):
                 cell = QTableWidgetItem(v); cell.setTextAlignment(Qt.AlignCenter)
-                self.tbl_i.setItem(r,c,cell)
-                
+                self.tbl_i.setItem(r, c, cell)
             btn_dl = QPushButton("Download")
             btn_dl.setStyleSheet("background:#27ae60; color:white; padding: 4px 8px; border-radius:3px; font-weight:bold; font-size:11px;")
             btn_dl.clicked.connect(lambda checked, i=inv: save_invoice_as_pdf(i, parent=self))
-            btn_container = QWidget(); bl = QHBoxLayout(btn_container); bl.setContentsMargins(0,0,0,0); bl.setAlignment(Qt.AlignCenter); bl.addWidget(btn_dl)
+            btn_container = QWidget(); bl = QHBoxLayout(btn_container)
+            bl.setContentsMargins(0,0,0,0); bl.setAlignment(Qt.AlignCenter); bl.addWidget(btn_dl)
             self.tbl_i.setCellWidget(r, 5, btn_container)
 
     def _delete(self):

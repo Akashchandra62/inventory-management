@@ -10,7 +10,9 @@ from PyQt5.QtWidgets import (
     QPushButton, QGroupBox, QMessageBox, QFrame, QScrollArea,
     QTextEdit, QFileDialog, QTabWidget, QSizePolicy, QApplication,
     QLayout, QSpacerItem, QGraphicsOpacityEffect,
-    QComboBox, QCompleter
+    QComboBox, QCompleter, QTableWidget, QTableWidgetItem,
+    QHeaderView, QAbstractItemView, QFormLayout,
+    QDoubleSpinBox, QAbstractSpinBox, QDialog, QDialogButtonBox
 )
 from PyQt5.QtCore import (
     Qt, pyqtSignal, QPropertyAnimation, QEasingCurve,
@@ -21,10 +23,13 @@ from PyQt5.QtGui import (
     QIcon, QDrag
 )
 from app.config import AppConfig
-from app.constants import APP_NAME, APP_VERSION, ASSETS_DIR, LOGO_FILE, QR_FILE
+from app.constants import APP_NAME, APP_VERSION, ASSETS_DIR, LOGO_FILE, QR_FILE, CERTIFICATE_FILE
 from services.auth_service import change_credentials, _get_credentials
 from services.item_catalog_service import (
     get_catalog, add_catalog_item, update_catalog_item, delete_catalog_item
+)
+from services.metal_service import (
+    get_metals, add_metal, update_metal as update_metal_rec, delete_metal
 )
 
 # ─── Chip colour palette ────────────────────────────────────
@@ -609,71 +614,309 @@ class SettingsPage(QWidget):
         self._tabs.addTab(self._build_profile_tab(),  "👤  Profile")
         self._tabs.addTab(self._build_payment_tab(),  "💳  Payment & QR")
         self._tabs.addTab(self._build_general_tab(),  "🛠  General")
+        self._tabs.addTab(self._build_metals_tab(),   "🔩  Metals")
         self._tabs.addTab(self._build_items_tab(),    "📦  Items")
 
         root.addWidget(self._tabs)
 
     # ════════════════════════════════════════════════════════
-    #  TAB 4 — Item Catalog (predefined item name master list)
+    #  TAB 4 — Metals & Rates
+    # ════════════════════════════════════════════════════════
+    def _build_metals_tab(self):
+        wrap, root = _scroll_tab()
+
+        sec = _section("⚙️  Metals & Rates")
+        sec_l = QVBoxLayout(sec)
+        sec_l.setContentsMargins(16, 18, 16, 16)
+        sec_l.setSpacing(10)
+
+        hint = QLabel(
+            "Add metals with purity, rate and labour charges. "
+            "These are used to auto-fill item details in the catalog and invoices."
+        )
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color:#7f8c8d;font-size:11px;")
+        sec_l.addWidget(hint)
+
+        self._metals_table = QTableWidget()
+        self._metals_table.setColumnCount(6)
+        self._metals_table.setHorizontalHeaderLabels(
+            ["#", "Metal Name", "Purity", "Rate ₹/g", "Labour ₹/g", "Actions"]
+        )
+        hdr = self._metals_table.horizontalHeader()
+        hdr.setSectionResizeMode(1, QHeaderView.Stretch)
+        hdr.setSectionResizeMode(2, QHeaderView.Stretch)
+        for col, w in {0: 32, 3: 110, 4: 110, 5: 130}.items():
+            self._metals_table.setColumnWidth(col, w)
+            hdr.setSectionResizeMode(col, QHeaderView.Fixed)
+        self._metals_table.verticalHeader().setVisible(False)
+        self._metals_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self._metals_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self._metals_table.setAlternatingRowColors(True)
+        self._metals_table.setMinimumHeight(220)
+        self._metals_table.verticalHeader().setDefaultSectionSize(38)
+        sec_l.addWidget(self._metals_table)
+
+        btn_add = QPushButton("+ Add Metal")
+        btn_add.setFixedHeight(36)
+        btn_add.setMaximumWidth(150)
+        btn_add.setCursor(Qt.PointingHandCursor)
+        btn_add.setStyleSheet(
+            "QPushButton{background:#27ae60;color:white;border-radius:6px;"
+            "font-size:13px;font-weight:600;border:none;padding:0 18px;}"
+            "QPushButton:hover{background:#229954;}"
+        )
+        btn_add.clicked.connect(self._add_metal_dialog)
+        sec_l.addWidget(btn_add)
+
+        root.addWidget(sec)
+        root.addStretch()
+        return wrap
+
+    def _refresh_metals_table(self):
+        metals = get_metals()
+        self._metals_table.setRowCount(0)
+        for i, m in enumerate(metals):
+            self._metals_table.insertRow(i)
+            vals = [
+                str(i + 1),
+                m.get("name", ""),
+                m.get("purity", ""),
+                f"₹ {m.get('rate', 0):,.2f}",
+                f"₹ {m.get('labour', 0):,.2f}",
+            ]
+            for c, v in enumerate(vals):
+                cell = QTableWidgetItem(v)
+                cell.setTextAlignment(Qt.AlignCenter)
+                self._metals_table.setItem(i, c, cell)
+
+            act_w = QWidget(); act_l = QHBoxLayout(act_w)
+            act_l.setContentsMargins(4, 4, 4, 4); act_l.setSpacing(4)
+            btn_e = QPushButton("Edit")
+            btn_e.setStyleSheet(
+                "QPushButton{background:#eef2ff;color:#3949ab;border:1px solid #c5cae9;"
+                "border-radius:4px;padding:3px 10px;font-size:11px;font-weight:600;}"
+                "QPushButton:hover{background:#c5cae9;}"
+            )
+            btn_e.clicked.connect(lambda _, metal=m: self._edit_metal_dialog(metal))
+            btn_d = QPushButton("✕")
+            btn_d.setFixedSize(26, 26)
+            btn_d.setStyleSheet(
+                "QPushButton{background:#fdecea;color:#c0392b;border:none;"
+                "border-radius:4px;font-weight:bold;font-size:12px;}"
+                "QPushButton:hover{background:#e74c3c;color:white;}"
+            )
+            btn_d.clicked.connect(lambda _, mid=m.get("id"): self._delete_metal(mid))
+            act_l.addWidget(btn_e); act_l.addWidget(btn_d)
+            self._metals_table.setCellWidget(i, 5, act_w)
+
+    def _add_metal_dialog(self):
+        self._metal_dialog(None)
+
+    def _edit_metal_dialog(self, metal: dict):
+        self._metal_dialog(metal)
+
+    def _metal_dialog(self, metal):
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Add Metal" if not metal else "Edit Metal")
+        dlg.setMinimumWidth(360)
+        dlg.setStyleSheet("QDialog{background:#f5f6fa;}")
+        vl = QVBoxLayout(dlg)
+        vl.setContentsMargins(16, 14, 16, 14)
+        vl.setSpacing(10)
+
+        def _lbl(t):
+            l = QLabel(t); l.setStyleSheet("font-weight:600;font-size:11px;color:#555;")
+            return l
+
+        def _txt(val="", ph=""):
+            t = QLineEdit(val); t.setPlaceholderText(ph); t.setFixedHeight(34)
+            t.setStyleSheet(
+                "QLineEdit{border:1px solid #ced4da;border-radius:6px;"
+                "padding:0 10px;font-size:13px;background:white;}"
+                "QLineEdit:focus{border-color:#27ae60;}"
+            )
+            return t
+
+        def _dspn(val=0.0):
+            s = QDoubleSpinBox()
+            s.setRange(0, 9999999); s.setDecimals(2); s.setValue(val)
+            s.setFixedHeight(34)
+            s.setButtonSymbols(QAbstractSpinBox.NoButtons)
+            s.setStyleSheet(
+                "QDoubleSpinBox{border:1px solid #ced4da;border-radius:6px;"
+                "padding:0 10px;font-size:13px;background:white;}"
+            )
+            return s
+
+        txt_name   = _txt(metal.get("name",   "") if metal else "", "e.g. Gold")
+        txt_purity = _txt(metal.get("purity", "") if metal else "", "e.g. 22Kt")
+        spn_rate   = _dspn(metal.get("rate",   0.0) if metal else 0.0)
+        spn_labour = _dspn(metal.get("labour", 0.0) if metal else 0.0)
+
+        fl = QFormLayout(); fl.setSpacing(8)
+        fl.addRow(_lbl("Metal Name *"),  txt_name)
+        fl.addRow(_lbl("Purity *"),      txt_purity)
+        fl.addRow(_lbl("Rate (₹/g) *"), spn_rate)
+        fl.addRow(_lbl("Labour (₹/g)"), spn_labour)
+        vl.addLayout(fl)
+
+        bb = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
+        bb.accepted.connect(dlg.accept)
+        bb.rejected.connect(dlg.reject)
+        vl.addWidget(bb)
+
+        if dlg.exec() != QDialog.Accepted:
+            return
+        name_v   = txt_name.text().strip()
+        purity_v = txt_purity.text().strip()
+        if not name_v or not purity_v:
+            QMessageBox.warning(self, "Validation", "Metal Name and Purity are required.")
+            return
+
+        if metal:
+            update_metal_rec(metal["id"], name_v, purity_v, spn_rate.value(), spn_labour.value())
+        else:
+            add_metal(name_v, purity_v, spn_rate.value(), spn_labour.value())
+
+        self._refresh_metals_table()
+        self._rebuild_catalog_categories()   # refresh metal dropdown in Items tab
+
+    def _delete_metal(self, metal_id: str):
+        reply = QMessageBox.question(
+            self, "Remove Metal", "Remove this metal from the list?",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        if reply == QMessageBox.Yes:
+            delete_metal(metal_id)
+            self._refresh_metals_table()
+            self._rebuild_catalog_categories()
+
+    # ════════════════════════════════════════════════════════
+    #  TAB 5 — Item Catalog
     # ════════════════════════════════════════════════════════
     def _build_items_tab(self):
         self._catalog: list[dict] = []
         wrap, root = _scroll_tab()
 
+        # ── Groups section ────────────────────────────────────
+        grp_sec = _section("🏷  Item Groups")
+        grp_sec_l = QVBoxLayout(grp_sec)
+        grp_sec_l.setContentsMargins(16, 12, 16, 16)
+        grp_sec_l.setSpacing(8)
+        grp_hint = QLabel(
+            "Create groups to organise catalog items (e.g. Gold Jewellery, Silver Items). "
+            "Drag chips to reorder."
+        )
+        grp_hint.setWordWrap(True)
+        grp_hint.setStyleSheet("color:#7f8c8d;font-size:11px;")
+        grp_sec_l.addWidget(grp_hint)
+        self._groups_editor = CategoriesEditor()
+        grp_sec_l.addWidget(self._groups_editor)
+        root.addWidget(grp_sec)
+
+        # ── Item Catalog section ──────────────────────────────
         sec = _section("📋  Item Catalog")
         sec_l = QVBoxLayout(sec)
         sec_l.setContentsMargins(16, 18, 16, 16)
         sec_l.setSpacing(10)
 
         hint = QLabel(
-            "Pre-define item names here. When adding stock you can pick from this list "
-            "(with prefix search) or type a new name — it will be added automatically."
+            "Give each item a short code (e.g. GN1). "
+            "While creating an invoice, type the code to auto-fill item name, purity and rate."
         )
         hint.setWordWrap(True)
         hint.setStyleSheet("color:#7f8c8d;font-size:11px;")
         sec_l.addWidget(hint)
 
-        # ── Add new item row (top) ───────────────────────────
-        add_row = QHBoxLayout()
-        add_row.setSpacing(8)
+        # ── Row 1: Name + Code + Category ────────────────────
+        add_row1 = QHBoxLayout(); add_row1.setSpacing(8)
 
         self._new_item_name = QLineEdit()
-        self._new_item_name.setPlaceholderText("New item name  (e.g. Gold Necklace)")
+        self._new_item_name.setPlaceholderText("Item name *  (e.g. Gold Necklace)")
         self._new_item_name.setFixedHeight(36)
         self._new_item_name.setStyleSheet(
             "QLineEdit{border:1px solid #ced4da;border-radius:6px;padding:0 10px;"
             "font-size:13px;background:white;}"
             "QLineEdit:focus{border:1px solid #3949ab;}"
         )
-        self._new_item_name.returnPressed.connect(self._add_catalog_item)
+
+        self._new_item_code = QLineEdit()
+        self._new_item_code.setPlaceholderText("Code  (e.g. GN1)")
+        self._new_item_code.setFixedHeight(36)
+        self._new_item_code.setFixedWidth(130)
+        self._new_item_code.setStyleSheet(
+            "QLineEdit{border:1px solid #ced4da;border-radius:6px;padding:0 10px;"
+            "font-size:13px;background:white;font-family:monospace;}"
+            "QLineEdit:focus{border:1px solid #3949ab;}"
+        )
 
         self._new_item_cat = QComboBox()
         self._new_item_cat.setFixedHeight(36)
-        self._new_item_cat.setMinimumWidth(140)
+        self._new_item_cat.setMinimumWidth(130)
         self._new_item_cat.setStyleSheet(
             "QComboBox{border:1px solid #ced4da;border-radius:6px;"
             "padding:0 8px;font-size:13px;background:white;}"
             "QComboBox::drop-down{border:none;}"
         )
 
-        btn_add_cat = QPushButton("+ Add")
-        btn_add_cat.setFixedHeight(36)
-        btn_add_cat.setCursor(Qt.PointingHandCursor)
-        btn_add_cat.setStyleSheet(
+        add_row1.addWidget(QLabel("Name *")); add_row1.addWidget(self._new_item_name, 1)
+        add_row1.addWidget(QLabel("Code"));   add_row1.addWidget(self._new_item_code)
+        add_row1.addWidget(QLabel("Category")); add_row1.addWidget(self._new_item_cat)
+
+        # ── Row 2: Metal + Purity + Group + Add button ────────
+        add_row2 = QHBoxLayout(); add_row2.setSpacing(8)
+
+        self._new_item_metal = QComboBox()
+        self._new_item_metal.setFixedHeight(36)
+        self._new_item_metal.setMinimumWidth(200)
+        self._new_item_metal.setStyleSheet(
+            "QComboBox{border:1px solid #ced4da;border-radius:6px;"
+            "padding:0 8px;font-size:13px;background:white;}"
+            "QComboBox::drop-down{border:none;}"
+        )
+        self._new_item_metal.currentIndexChanged.connect(self._on_new_item_metal_changed)
+
+        self._new_item_purity = QLineEdit()
+        self._new_item_purity.setPlaceholderText("Purity (auto-filled)")
+        self._new_item_purity.setFixedHeight(36)
+        self._new_item_purity.setFixedWidth(130)
+        self._new_item_purity.setStyleSheet(
+            "QLineEdit{border:1px solid #ced4da;border-radius:6px;"
+            "padding:0 10px;font-size:13px;background:white;}"
+        )
+
+        self._new_item_group = QLineEdit()
+        self._new_item_group.setPlaceholderText("Group (optional)")
+        self._new_item_group.setFixedHeight(36)
+        self._new_item_group.setFixedWidth(160)
+        self._new_item_group.setStyleSheet(
+            "QLineEdit{border:1px solid #ced4da;border-radius:6px;"
+            "padding:0 10px;font-size:13px;background:white;}"
+        )
+
+        btn_add_item = QPushButton("+ Add Item")
+        btn_add_item.setFixedHeight(36)
+        btn_add_item.setCursor(Qt.PointingHandCursor)
+        btn_add_item.setStyleSheet(
             "QPushButton{background:#3949ab;color:white;border-radius:6px;"
             "font-size:13px;font-weight:600;border:none;padding:0 18px;}"
             "QPushButton:hover{background:#283593;}"
         )
-        btn_add_cat.clicked.connect(self._add_catalog_item)
+        btn_add_item.clicked.connect(self._add_catalog_item)
+        self._new_item_name.returnPressed.connect(self._add_catalog_item)
 
-        add_row.addWidget(self._new_item_name, 1)
-        add_row.addWidget(self._new_item_cat)
-        add_row.addWidget(btn_add_cat)
-        sec_l.addLayout(add_row)
+        add_row2.addWidget(QLabel("Metal"));  add_row2.addWidget(self._new_item_metal)
+        add_row2.addWidget(QLabel("Purity")); add_row2.addWidget(self._new_item_purity)
+        add_row2.addWidget(QLabel("Group"));  add_row2.addWidget(self._new_item_group)
+        add_row2.addStretch()
+        add_row2.addWidget(btn_add_item)
+
+        sec_l.addLayout(add_row1)
+        sec_l.addLayout(add_row2)
 
         # Divider
-        div = QFrame()
-        div.setFrameShape(QFrame.HLine)
+        div = QFrame(); div.setFrameShape(QFrame.HLine)
         div.setStyleSheet("color:#e8ecef;")
         sec_l.addWidget(div)
 
@@ -694,7 +937,7 @@ class SettingsPage(QWidget):
         search_row.addWidget(self._catalog_count)
         sec_l.addLayout(search_row)
 
-        # Card list — items rendered directly here (tab already scrolls)
+        # Card list
         self._catalog_list_widget = QWidget()
         self._catalog_list_widget.setStyleSheet("background:transparent;")
         self._catalog_list_layout = QVBoxLayout(self._catalog_list_widget)
@@ -706,11 +949,35 @@ class SettingsPage(QWidget):
         root.addStretch()
         return wrap
 
+    def _on_new_item_metal_changed(self, idx):
+        metals = get_metals()
+        if idx <= 0 or idx - 1 >= len(metals):
+            self._new_item_purity.clear()
+            return
+        m = metals[idx - 1]
+        self._new_item_purity.setText(m.get("purity", ""))
+
     def _rebuild_catalog_categories(self):
         cats = AppConfig.categories()
         self._new_item_cat.clear()
         self._new_item_cat.addItem("(no category)")
         self._new_item_cat.addItems(cats)
+
+        metals = get_metals()
+        self._new_item_metal.blockSignals(True)
+        self._new_item_metal.clear()
+        self._new_item_metal.addItem("(no metal)")
+        for m in metals:
+            self._new_item_metal.addItem(f"{m['name']} – {m['purity']}", m.get("id"))
+        self._new_item_metal.blockSignals(False)
+
+        # Update group completer from groups list
+        groups = AppConfig.item_groups()
+        if hasattr(self, '_new_item_group') and groups:
+            gc = QCompleter(groups, self)
+            gc.setCaseSensitivity(Qt.CaseInsensitive)
+            gc.setFilterMode(Qt.MatchContains)
+            self._new_item_group.setCompleter(gc)
 
     def _refresh_catalog(self):
         self._catalog = get_catalog()
@@ -748,39 +1015,70 @@ class SettingsPage(QWidget):
         )
 
     def _make_catalog_row(self, entry: dict) -> QWidget:
-        name = entry.get("name", "")
-        cat  = entry.get("category", "")
+        name   = entry.get("name",     "")
+        cat    = entry.get("category", "")
+        code   = entry.get("code",     "")
+        group  = entry.get("group",    "")
+        purity = entry.get("purity",   "")
 
         card = QFrame()
         card.setFixedHeight(52)
         card.setStyleSheet(
-            "QFrame{background:white;border:1px solid #e8ecef;"
-            "border-radius:8px;}"
+            "QFrame{background:white;border:1px solid #e8ecef;border-radius:8px;}"
             "QFrame:hover{border-color:#c5cae9;background:#fdfdff;}"
         )
         hl = QHBoxLayout(card)
         hl.setContentsMargins(14, 0, 10, 0)
-        hl.setSpacing(10)
+        hl.setSpacing(8)
 
-        # Colored left accent bar
         accent = QFrame()
         accent.setFixedSize(4, 28)
-        color = _chip_color(name)
-        accent.setStyleSheet(f"background:{color};border-radius:2px;border:none;")
+        accent.setStyleSheet(f"background:{_chip_color(name)};border-radius:2px;border:none;")
 
         lbl_name = QLabel(name)
         lbl_name.setStyleSheet(
             "font-size:13px;font-weight:600;color:#2c3e50;background:transparent;border:none;"
         )
 
-        lbl_cat = QLabel(cat) if cat else None
-        if lbl_cat:
-            cat_color = _chip_color(cat)
+        hl.addWidget(accent)
+
+        if code:
+            lbl_code = QLabel(code)
+            lbl_code.setStyleSheet(
+                "background:#e8f4fd;color:#2980b9;font-size:10px;font-weight:700;"
+                "border-radius:4px;padding:2px 8px;border:none;font-family:monospace;"
+            )
+            lbl_code.setFixedHeight(20)
+            hl.addWidget(lbl_code)
+
+        hl.addWidget(lbl_name, 1)
+
+        if group:
+            lbl_grp = QLabel(group)
+            lbl_grp.setStyleSheet(
+                f"background:{_chip_color(group)};color:white;font-size:10px;font-weight:600;"
+                "border-radius:10px;padding:3px 10px;border:none;"
+            )
+            lbl_grp.setFixedHeight(22)
+            hl.addWidget(lbl_grp)
+
+        if purity:
+            lbl_pur = QLabel(purity)
+            lbl_pur.setStyleSheet(
+                "background:#fef9e7;color:#e67e22;font-size:10px;font-weight:600;"
+                "border-radius:4px;padding:2px 8px;border:none;"
+            )
+            lbl_pur.setFixedHeight(20)
+            hl.addWidget(lbl_pur)
+
+        elif cat:
+            lbl_cat = QLabel(cat)
             lbl_cat.setStyleSheet(
-                f"background:{cat_color};color:white;font-size:10px;font-weight:600;"
-                f"border-radius:10px;padding:3px 12px;border:none;"
+                f"background:{_chip_color(cat)};color:white;font-size:10px;font-weight:600;"
+                "border-radius:10px;padding:3px 10px;border:none;"
             )
             lbl_cat.setFixedHeight(22)
+            hl.addWidget(lbl_cat)
 
         btn_edit = QPushButton("✎  Edit")
         btn_edit.setFixedHeight(30)
@@ -803,10 +1101,6 @@ class SettingsPage(QWidget):
         )
         btn_del.clicked.connect(lambda _, n=name: self._delete_catalog_item(n))
 
-        hl.addWidget(accent)
-        hl.addWidget(lbl_name, 1)
-        if lbl_cat:
-            hl.addWidget(lbl_cat)
         hl.addWidget(btn_edit)
         hl.addWidget(btn_del)
         return card
@@ -818,20 +1112,37 @@ class SettingsPage(QWidget):
         cat = self._new_item_cat.currentText()
         if cat == "(no category)":
             cat = ""
-        ok = add_catalog_item(name, cat)
+        code   = self._new_item_code.text().strip().upper()
+        purity = self._new_item_purity.text().strip()
+        group  = self._new_item_group.text().strip()
+
+        midx     = self._new_item_metal.currentIndex()
+        metal_id = self._new_item_metal.itemData(midx) if midx > 0 else ""
+        rate = labour = 0.0
+        if metal_id:
+            m = next((x for x in get_metals() if x.get("id") == metal_id), None)
+            if m:
+                rate   = m.get("rate",   0.0)
+                labour = m.get("labour", 0.0)
+                if not purity:
+                    purity = m.get("purity", "")
+
+        ok = add_catalog_item(name, cat, purity, code, group, metal_id, rate, labour)
         if not ok:
-            QMessageBox.warning(self, "Duplicate", f'"{name}" already exists in the catalog.')
+            QMessageBox.warning(self, "Duplicate",
+                f'"{name}" already exists (or the code "{code}" is already taken).')
             return
         self._new_item_name.clear()
+        self._new_item_code.clear()
+        self._new_item_purity.clear()
+        self._new_item_group.clear()
         self._cat_search.clear()
         self._refresh_catalog()
 
     def _edit_catalog_item(self, old_name: str):
-        # Inline: show a small dialog to rename
-        from PyQt5.QtWidgets import QDialog, QDialogButtonBox
         dlg = QDialog(self)
         dlg.setWindowTitle("Edit Item")
-        dlg.setMinimumWidth(320)
+        dlg.setMinimumWidth(420)
         dlg.setStyleSheet("QDialog{background:#f5f6fa;}")
         vl = QVBoxLayout(dlg)
         vl.setContentsMargins(16, 14, 16, 14)
@@ -839,45 +1150,86 @@ class SettingsPage(QWidget):
 
         entry = next((i for i in self._catalog if i["name"] == old_name), {})
 
-        lbl = QLabel("Item Name *")
-        lbl.setStyleSheet("font-weight:600;font-size:11px;color:#555;")
-        txt = QLineEdit(old_name)
-        txt.setFixedHeight(34)
-        txt.setStyleSheet(
-            "QLineEdit{border:1px solid #ced4da;border-radius:6px;"
-            "padding:0 10px;font-size:13px;background:white;}"
-            "QLineEdit:focus{border-color:#8e44ad;}"
-        )
-        lbl2 = QLabel("Category")
-        lbl2.setStyleSheet("font-weight:600;font-size:11px;color:#555;")
-        cmb = QComboBox()
-        cmb.setFixedHeight(34)
-        cmb.addItem("(no category)")
-        cmb.addItems(AppConfig.categories())
+        def _lbl(t):
+            l = QLabel(t); l.setStyleSheet("font-weight:600;font-size:11px;color:#555;")
+            return l
+
+        def _txt(val="", ph=""):
+            t = QLineEdit(val); t.setPlaceholderText(ph); t.setFixedHeight(34)
+            t.setStyleSheet(
+                "QLineEdit{border:1px solid #ced4da;border-radius:6px;"
+                "padding:0 10px;font-size:13px;background:white;}"
+            )
+            return t
+
+        txt_name   = _txt(old_name,                    "Item name *")
+        txt_code   = _txt(entry.get("code",   ""),     "Code (shortcut)")
+        txt_purity = _txt(entry.get("purity", ""),     "Purity")
+        txt_group  = _txt(entry.get("group",  ""),     "Group")
+
+        cmb_cat = QComboBox(); cmb_cat.setFixedHeight(34)
+        cmb_cat.addItem("(no category)"); cmb_cat.addItems(AppConfig.categories())
         if entry.get("category"):
-            idx = cmb.findText(entry["category"])
-            if idx >= 0:
-                cmb.setCurrentIndex(idx)
+            idx = cmb_cat.findText(entry["category"])
+            if idx >= 0: cmb_cat.setCurrentIndex(idx)
 
-        bb = QDialogButtonBox(
-            QDialogButtonBox.Save | QDialogButtonBox.Cancel
-        )
-        bb.accepted.connect(dlg.accept)
-        bb.rejected.connect(dlg.reject)
+        metals = get_metals()
+        cmb_metal = QComboBox(); cmb_metal.setFixedHeight(34)
+        cmb_metal.addItem("(no metal)")
+        for m in metals:
+            cmb_metal.addItem(f"{m['name']} – {m['purity']}", m.get("id"))
+        cur_mid = entry.get("metal_id", "")
+        if cur_mid:
+            for i in range(cmb_metal.count()):
+                if cmb_metal.itemData(i) == cur_mid:
+                    cmb_metal.setCurrentIndex(i); break
 
-        vl.addWidget(lbl); vl.addWidget(txt)
-        vl.addWidget(lbl2); vl.addWidget(cmb)
+        def _on_metal_change(idx):
+            if idx > 0 and idx - 1 < len(metals):
+                m = metals[idx - 1]
+                if not txt_purity.text():
+                    txt_purity.setText(m.get("purity", ""))
+        cmb_metal.currentIndexChanged.connect(_on_metal_change)
+
+        fl = QFormLayout(); fl.setSpacing(8)
+        fl.addRow(_lbl("Item Name *"), txt_name)
+        fl.addRow(_lbl("Code"),        txt_code)
+        fl.addRow(_lbl("Category"),    cmb_cat)
+        fl.addRow(_lbl("Metal"),       cmb_metal)
+        fl.addRow(_lbl("Purity"),      txt_purity)
+        fl.addRow(_lbl("Group"),       txt_group)
+        vl.addLayout(fl)
+
+        bb = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
+        bb.accepted.connect(dlg.accept); bb.rejected.connect(dlg.reject)
         vl.addWidget(bb)
 
         if dlg.exec() != QDialog.Accepted:
             return
-        new_name = txt.text().strip()
-        new_cat  = cmb.currentText()
-        if new_cat == "(no category)":
-            new_cat = ""
-        if not new_name:
-            return
-        update_catalog_item(old_name, new_name, new_cat)
+        new_name = txt_name.text().strip()
+        if not new_name: return
+
+        new_cat = cmb_cat.currentText()
+        if new_cat == "(no category)": new_cat = ""
+
+        midx     = cmb_metal.currentIndex()
+        metal_id = cmb_metal.itemData(midx) if midx > 0 else ""
+        rate = labour = 0.0
+        if metal_id:
+            m = next((x for x in metals if x.get("id") == metal_id), None)
+            if m:
+                rate   = m.get("rate",   0.0)
+                labour = m.get("labour", 0.0)
+
+        update_catalog_item(
+            old_name, new_name, new_cat,
+            purity   = txt_purity.text().strip(),
+            code     = txt_code.text().strip().upper(),
+            group    = txt_group.text().strip(),
+            metal_id = metal_id,
+            rate     = rate,
+            labour   = labour,
+        )
         self._refresh_catalog()
 
     def _delete_catalog_item(self, name: str):
@@ -985,6 +1337,47 @@ class SettingsPage(QWidget):
         logo_l.addLayout(logo_btns)
         logo_l.addStretch()
         root.addWidget(logo_sec)
+
+        # ── Hallmark / Certificate Image ──────────────────────
+        cert_sec = _section("🏅  Hallmark / Certificate Image")
+        cert_l = QHBoxLayout(cert_sec)
+        cert_l.setContentsMargins(16, 12, 16, 16)
+        cert_l.setSpacing(20)
+
+        self.lbl_cert_preview = QLabel("No image\nuploaded")
+        self.lbl_cert_preview.setFixedSize(100, 100)
+        self.lbl_cert_preview.setAlignment(Qt.AlignCenter)
+        self.lbl_cert_preview.setStyleSheet(
+            "border:2px dashed #bdc3c7;border-radius:8px;color:#7f8c8d;font-size:11px;"
+        )
+
+        cert_btns = QVBoxLayout()
+        btn_uc = QPushButton("📁  Upload Image")
+        btn_uc.setStyleSheet(
+            "QPushButton{background:#2980b9;color:white;border-radius:5px;padding:8px 16px;border:none;}"
+            "QPushButton:hover{background:#2471a3;}"
+        )
+        btn_uc.clicked.connect(self._upload_certificate)
+        btn_rc = QPushButton("🗑  Remove")
+        btn_rc.setStyleSheet(
+            "QPushButton{background:#e74c3c;color:white;border-radius:5px;padding:8px 16px;border:none;}"
+            "QPushButton:hover{background:#c0392b;}"
+        )
+        btn_rc.clicked.connect(self._remove_certificate)
+        cert_note = QLabel(
+            "Shown on the right side of the\ninvoice header.\n"
+            "Accepted: PNG, JPG  ·  Recommended: square"
+        )
+        cert_note.setStyleSheet("color:#7f8c8d;font-size:11px;")
+        cert_btns.addWidget(btn_uc)
+        cert_btns.addWidget(btn_rc)
+        cert_btns.addWidget(cert_note)
+        cert_btns.addStretch()
+
+        cert_l.addWidget(self.lbl_cert_preview)
+        cert_l.addLayout(cert_btns)
+        cert_l.addStretch()
+        root.addWidget(cert_sec)
 
         # ── Shop Info ─────────────────────────────────────────
         info_sec = _section("🏪  Shop Information")
@@ -1278,6 +1671,38 @@ class SettingsPage(QWidget):
             self.lbl_qr_preview.setPixmap(QPixmap())
             self.lbl_qr_preview.setText("No QR code\nuploaded")
 
+    def _upload_certificate(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Select Hallmark / Certificate Image", "",
+            "Images (*.png *.jpg *.jpeg)"
+        )
+        if not path: return
+        try:
+            _ensure_assets_dir()
+            shutil.copy2(path, CERTIFICATE_FILE)
+            self._load_certificate_preview()
+            QMessageBox.information(self, "Uploaded", "Certificate image saved!")
+        except Exception as e:
+            QMessageBox.critical(self, "Error", str(e))
+
+    def _remove_certificate(self):
+        try:
+            if os.path.exists(CERTIFICATE_FILE): os.remove(CERTIFICATE_FILE)
+        except Exception: pass
+        self.lbl_cert_preview.setPixmap(QPixmap())
+        self.lbl_cert_preview.setText("No image\nuploaded")
+
+    def _load_certificate_preview(self):
+        if os.path.exists(CERTIFICATE_FILE):
+            pix = QPixmap(CERTIFICATE_FILE).scaled(
+                96, 96, Qt.KeepAspectRatio,
+                Qt.SmoothTransformation)
+            self.lbl_cert_preview.setPixmap(pix)
+            self.lbl_cert_preview.setText("")
+        else:
+            self.lbl_cert_preview.setPixmap(QPixmap())
+            self.lbl_cert_preview.setText("No image\nuploaded")
+
     def refresh(self):
         user, _ = _get_credentials()
         self.txt_new_username.setText(user)
@@ -1310,13 +1735,20 @@ class SettingsPage(QWidget):
 
         self._load_logo_preview()
         self._load_qr_preview()
+        self._load_certificate_preview()
         self._refresh_catalog()
+        self._refresh_metals_table()
+
+        # Load item groups
+        groups = AppConfig.item_groups()
+        self._groups_editor.set_categories(groups)
 
     def _save(self):
         if not self.txt_name.text().strip():
             QMessageBox.warning(self, "Validation", "Shop Name is required.")
             return
-        cats = self._cat_editor.get_categories()
+        cats   = self._cat_editor.get_categories()
+        groups = self._groups_editor.get_categories()
         data = {
             "shop_name":      self.txt_name.text().strip(),
             "tagline":        self.txt_tagline.text().strip(),
@@ -1331,6 +1763,7 @@ class SettingsPage(QWidget):
             "jurisdiction":   self.txt_jurisdiction.text().strip(),
             "invoice_prefix": self.txt_prefix.text().strip() or "JB",
             "categories":     ", ".join(cats),
+            "item_groups":    ", ".join(groups),
             "default_tax":    3.0,
             "bank_name":      self.txt_bank_name.text().strip(),
             "account_name":   self.txt_acc_name.text().strip(),

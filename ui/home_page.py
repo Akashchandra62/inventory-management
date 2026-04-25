@@ -226,18 +226,26 @@ class HomePage(QWidget):
 
         today_str = date.today().isoformat()
         today_inv = [i for i in self._all_invoices if i.get("date") == today_str]
-        today_sales = sum(i.get("grand_total", 0) for i in today_inv)
-        total_sales = sum(i.get("grand_total", 0) for i in self._all_invoices)
+        today_sales  = sum(i.get("grand_total", 0) for i in today_inv)
+        total_sales  = sum(i.get("grand_total", 0) for i in self._all_invoices)
+        today_cash   = sum(float(i.get("cash_paid",  0)) for i in today_inv)
+        today_upi    = sum(float(i.get("upi_paid",   0)) for i in today_inv)
+        today_card   = sum(float(i.get("card_paid",  0)) for i in today_inv)
+        today_cheque = sum(float(i.get("cheque_paid",0)) for i in today_inv)
 
         cards_data = [
-            ("today_sales", "💰", "Today's Sales",    format_currency(today_sales), "#f39c12"),
-            ("total_sales", "📊", "Total Revenue",    format_currency(total_sales), "#27ae60"),
-            ("today_invoices", "🧾", "Today's Invoices", str(len(today_inv)),          "#2980b9"),
-            ("total_invoices", "🧾", "Total Invoices",   str(len(self._all_invoices)),           "#8e44ad"),
-            ("stock", "📦", "Stock Items",      str(len(self._all_stock)),              "#16a085"),
-            ("vendors", "🏪", "Vendors",          str(len(self._all_vendors)),            "#2c3e50"),
-            ("customers", "👥", "Customers",        str(len(self._all_customers)),          "#c0392b"),
-            ("low_stock", "⚠️", "Low Stock",        str(len(self._all_low_stock)),          "#e74c3c"),
+            ("today_sales",   "💰", "Today's Sales",    format_currency(today_sales),   "#f39c12"),
+            ("today_cash",    "💵", "Today's Cash",     format_currency(today_cash),    "#27ae60"),
+            ("today_upi",     "📲", "Today's UPI",      format_currency(today_upi),     "#2980b9"),
+            ("today_card",    "💳", "Today's Card",     format_currency(today_card),    "#8e44ad"),
+            ("today_cheque",  "🏦", "Today's Cheque",   format_currency(today_cheque),  "#16a085"),
+            ("today_invoices","🧾", "Today's Invoices", str(len(today_inv)),            "#e67e22"),
+            ("total_sales",   "📊", "Total Revenue",    format_currency(total_sales),   "#c0392b"),
+            ("total_invoices","📋", "Total Invoices",   str(len(self._all_invoices)),   "#7f8c8d"),
+            ("stock",         "📦", "Stock Items",      str(len(self._all_stock)),      "#1abc9c"),
+            ("customers",     "👥", "Customers",        str(len(self._all_customers)),  "#2c3e50"),
+            ("vendors",       "🏪", "Vendors",          str(len(self._all_vendors)),    "#d35400"),
+            ("low_stock",     "⚠️", "Low Stock",        str(len(self._all_low_stock)),  "#e74c3c"),
         ]
 
         for idx, (key, icon, title, val, color) in enumerate(cards_data):
@@ -261,28 +269,30 @@ class HomePage(QWidget):
     def _on_card_clicked(self, key: str):
         self._current_metric = key
         titles = {
-            "today_sales": "Today's Sales",
-            "total_sales": "Total Revenue",
+            "today_sales":    "Today's Sales",
+            "today_cash":     "Today's Cash Payments",
+            "today_upi":      "Today's UPI Payments",
+            "today_card":     "Today's Card Payments",
+            "today_cheque":   "Today's Cheque Payments",
             "today_invoices": "Today's Invoices",
+            "total_sales":    "Total Revenue",
             "total_invoices": "Total Invoices",
-            "stock": "Stock Items",
-            "vendors": "Vendors",
-            "customers": "Customers",
-            "low_stock": "Low Stock"
+            "stock":          "Stock Items",
+            "vendors":        "Vendors",
+            "customers":      "Customers",
+            "low_stock":      "Low Stock",
         }
         self.lbl_metric_title.setText(f"Showing: {titles.get(key, key)}")
-        
-        # Enable dates for sales/invoices, otherwise disable
-        if key in ["today_sales", "total_sales", "today_invoices", "total_invoices"]:
-            self.dt_from.setEnabled(True)
-            self.dt_to.setEnabled(True)
-            self.lbl_date_from.setEnabled(True)
-            self.lbl_date_to.setEnabled(True)
-        else:
-            self.dt_from.setEnabled(False)
-            self.dt_to.setEnabled(False)
-            self.lbl_date_from.setEnabled(False)
-            self.lbl_date_to.setEnabled(False)
+
+        invoice_keys = {
+            "today_sales", "today_cash", "today_upi", "today_card",
+            "today_cheque", "today_invoices", "total_sales", "total_invoices"
+        }
+        enable = key in invoice_keys
+        self.dt_from.setEnabled(enable)
+        self.dt_to.setEnabled(enable)
+        self.lbl_date_from.setEnabled(enable)
+        self.lbl_date_to.setEnabled(enable)
             
         self._apply_filters()
 
@@ -295,27 +305,72 @@ class HomePage(QWidget):
         data = []
         headers = []
 
-        if self._current_metric in ["today_sales", "total_sales", "today_invoices", "total_invoices"]:
-            headers = ["Inv No", "Date", "Customer", "Mobile", "Grand Total"]
+        # ── Invoice / payment-mode metrics ────────────────────
+        _pay_field = {
+            "today_cash":   "cash_paid",
+            "today_upi":    "upi_paid",
+            "today_card":   "card_paid",
+            "today_cheque": "cheque_paid",
+        }
+        _today_only = {
+            "today_sales", "today_cash", "today_upi",
+            "today_card", "today_cheque", "today_invoices",
+        }
+
+        if self._current_metric in (
+            "today_sales", "today_invoices", "total_sales", "total_invoices",
+            "today_cash", "today_upi", "today_card", "today_cheque",
+        ):
+            pay_field = _pay_field.get(self._current_metric)
+            if pay_field:
+                headers = ["Inv No", "Date", "Customer", "Mobile",
+                           "Grand Total", "Cash", "UPI", "Card", "Cheque", "Due"]
+            else:
+                headers = ["Inv No", "Date", "Customer", "Mobile", "Grand Total"]
+
             for inv in self._all_invoices:
                 inv_dt = inv.get("date", "")
-                
-                if self._current_metric in ["today_sales", "today_invoices"]:
-                    if inv_dt != today_str: continue
+
+                if self._current_metric in _today_only:
+                    if inv_dt != today_str:
+                        continue
                 else:
-                    if not (d_from <= inv_dt <= d_to): continue
-                
+                    if not (d_from <= inv_dt <= d_to):
+                        continue
+
+                # For payment-mode cards only include invoices where that mode > 0
+                if pay_field and float(inv.get(pay_field, 0)) == 0:
+                    continue
+
                 if term:
-                    values = f"{inv.get('invoice_number','')} {inv.get('customer_name','')} {inv.get('customer_mobile','')} {inv.get('grand_total','')} {inv_dt}".lower()
-                    if term not in values: continue
-                    
-                row_data = [
-                    inv.get("invoice_number", ""),
-                    inv_dt,
-                    inv.get("customer_name", ""),
-                    inv.get("customer_mobile", ""),
-                    format_currency(inv.get("grand_total", 0))
-                ]
+                    values = (
+                        f"{inv.get('invoice_number','')} {inv.get('customer_name','')} "
+                        f"{inv.get('customer_mobile','')} {inv.get('grand_total','')} {inv_dt}"
+                    ).lower()
+                    if term not in values:
+                        continue
+
+                if pay_field:
+                    row_data = [
+                        inv.get("invoice_number", ""),
+                        inv_dt,
+                        inv.get("customer_name", ""),
+                        inv.get("customer_mobile", ""),
+                        format_currency(inv.get("grand_total",   0)),
+                        format_currency(inv.get("cash_paid",     0)),
+                        format_currency(inv.get("upi_paid",      0)),
+                        format_currency(inv.get("card_paid",     0)),
+                        format_currency(inv.get("cheque_paid",   0)),
+                        format_currency(inv.get("due_amount",    0)),
+                    ]
+                else:
+                    row_data = [
+                        inv.get("invoice_number", ""),
+                        inv_dt,
+                        inv.get("customer_name", ""),
+                        inv.get("customer_mobile", ""),
+                        format_currency(inv.get("grand_total", 0)),
+                    ]
                 data.append(row_data)
 
         elif self._current_metric in ["stock", "low_stock"]:
