@@ -82,14 +82,25 @@ def safe_read(path: str):
 
 
 def safe_write(path: str, data) -> bool:
-    """Write data to a JSON file safely. Returns True on success."""
+    """Write data to a JSON file atomically. Returns True on success.
+
+    Writes to a .tmp sibling first, then os.replace() swaps it in so a
+    crash mid-write can never leave a half-written (corrupted) file.
+    """
+    tmp_path = path + ".tmp"
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
+        with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
+        os.replace(tmp_path, path)
         return True
     except Exception as e:
         logging.error(f"Failed to write {path}: {e}")
+        try:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+        except Exception:
+            pass
         return False
 
 

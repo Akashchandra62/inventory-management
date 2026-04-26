@@ -43,13 +43,22 @@ def get_item_by_id(item_id: str) -> Optional[dict]:
     return None
 
 
-def reduce_stock(item_name: str, quantity: int) -> bool:
-    """Reduce stock quantity after a sale."""
+def reduce_stock(item_name: str, quantity: int, purity: str = "") -> bool:
+    """Reduce stock quantity after a sale.
+
+    Matches on name + purity (both case-insensitive) so that two items with
+    the same name but different purities are not confused.  Only the first
+    matching row is reduced to avoid double-deduction.
+    Returns False (without writing) if no matching item is found.
+    """
     stock = get_all_stock()
     for s in stock:
-        if s.get("item_name", "").lower() == item_name.lower():
+        name_match   = s.get("item_name", "").lower() == item_name.lower()
+        purity_match = not purity or s.get("purity", "").lower() == purity.lower()
+        if name_match and purity_match:
             s["quantity"] = max(0, s.get("quantity", 0) - quantity)
-    return save_all_stock(stock)
+            return save_all_stock(stock)
+    return False
 
 
 def get_low_stock(threshold: float = 2, column: str = "quantity") -> list:

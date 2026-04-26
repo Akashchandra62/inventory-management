@@ -25,9 +25,15 @@ def create_invoice(
     items: list,
     tax_percent: float,
     notes: str = "",
-    customer_email: str = ""
+    customer_email: str = "",
+    extra: dict = None,
 ) -> dict:
-    """Build, save and return a full invoice dict."""
+    """Build, save and return a full invoice dict.
+
+    ``extra`` is merged into the saved record before writing so that fields
+    like CGST/SGST breakdown, payment modes, due amount, customer GST/Aadhaar/PAN
+    and remarks are persisted alongside the core invoice data.
+    """
     inv_number, _ = AppConfig.increment_invoice_number()
     now = datetime.now()
 
@@ -53,15 +59,20 @@ def create_invoice(
 
     find_or_create_customer(customer_name, customer_mobile, customer_address, customer_email)
 
-    for item in items:
-        if item.get("name"):
-            reduce_stock(item["name"], item.get("quantity", 1))
-
     invoices = get_all_invoices()
     inv_dict = invoice.to_dict()
     inv_dict["customer_email"] = customer_email
+    if extra:
+        inv_dict.update(extra)
     invoices.append(inv_dict)
-    save_all_invoices(invoices)
+    if not save_all_invoices(invoices):
+        raise RuntimeError("Failed to save invoice — stock was not reduced.")
+
+    # Only reduce stock after the invoice is durably written.
+    for item in items:
+        if item.get("name"):
+            reduce_stock(item["name"], item.get("quantity", 1), item.get("purity", ""))
+
     return inv_dict
 
 

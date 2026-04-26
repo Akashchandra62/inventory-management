@@ -19,9 +19,9 @@ if sys.platform == "win32":
         import importlib.util
         spec = importlib.util.find_spec("PyQt5")
         if spec and spec.submodule_search_locations:
-            pyqt6_root = list(spec.submodule_search_locations)[0]
-            for sub in ["Qt6\\bin", "Qt6\\plugins\\platforms", "Qt6\\plugins"]:
-                candidate = os.path.join(pyqt6_root, sub)
+            pyqt5_root = list(spec.submodule_search_locations)[0]
+            for sub in ["Qt5\\bin", "Qt5\\plugins\\platforms", "Qt5\\plugins"]:
+                candidate = os.path.join(pyqt5_root, sub)
                 if os.path.isdir(candidate):
                     os.add_dll_directory(candidate)
         python_dir = os.path.dirname(sys.executable)

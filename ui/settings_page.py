@@ -23,7 +23,7 @@ from PyQt5.QtGui import (
     QIcon, QDrag
 )
 from app.config import AppConfig
-from app.constants import APP_NAME, APP_VERSION, ASSETS_DIR, LOGO_FILE, QR_FILE, CERTIFICATE_FILE
+from app.constants import APP_NAME, APP_VERSION, ASSETS_DIR, DATA_DIR, LOGO_FILE, QR_FILE, CERTIFICATE_FILE
 from services.auth_service import change_credentials, _get_credentials
 from services.item_catalog_service import (
     get_catalog, add_catalog_item, update_catalog_item, delete_catalog_item
@@ -525,12 +525,6 @@ def _le(ph=""):
     e.setPlaceholderText(ph)
     e.setMinimumHeight(34)
     return e
-
-
-def _grp(title):
-    g = QGroupBox(title)
-    f = g, None
-    return g
 
 
 def _section(title):
@@ -1545,11 +1539,29 @@ class SettingsPage(QWidget):
 
         self.txt_prefix       = _le("Invoice prefix e.g. JB")
         self.txt_prefix.setMaximumWidth(160)
-        self.txt_state        = _le("e.g. Bihar Code : 10")
+        self.txt_state        = _le("e.g. Bihar")
+        self.txt_state_code   = _le("e.g. 10")
+        self.txt_state_code.setMaximumWidth(100)
         self.txt_jurisdiction = _le("e.g. ROHTAS")
 
+        self.spn_default_tax = QDoubleSpinBox()
+        self.spn_default_tax.setRange(0, 28)
+        self.spn_default_tax.setDecimals(2)
+        self.spn_default_tax.setSuffix(" %")
+        self.spn_default_tax.setValue(3.0)
+        self.spn_default_tax.setMaximumWidth(110)
+        self.spn_default_tax.setMinimumHeight(34)
+        self.spn_default_tax.setButtonSymbols(QAbstractSpinBox.NoButtons)
+        self.spn_default_tax.setStyleSheet(
+            "QDoubleSpinBox{border:1px solid #ced4da;border-radius:5px;"
+            "padding:0 10px;font-size:13px;background:white;}"
+            "QDoubleSpinBox:focus{border:1px solid #3498db;}"
+        )
+
         irow("Invoice Prefix",  self.txt_prefix)
+        irow("Default GST %",   self.spn_default_tax)
         irow("State",           self.txt_state)
+        irow("State Code",      self.txt_state_code)
         irow("Jurisdiction",    self.txt_jurisdiction)
         root.addWidget(inv_sec)
 
@@ -1574,7 +1586,7 @@ class SettingsPage(QWidget):
         for line in [
             f"<b>App:</b> {APP_NAME}",
             f"<b>Version:</b> {APP_VERSION}",
-            f"<b>Data:</b> C:\\JewelryBillingSystem\\data\\",
+            f"<b>Data:</b> {DATA_DIR}",
             f"<b>Assets:</b> {ASSETS_DIR}",
         ]:
             lbl = QLabel(line)
@@ -1720,8 +1732,10 @@ class SettingsPage(QWidget):
         self.txt_email.setText(shop.get("email", ""))
         self.txt_invoice_heading.setText(shop.get("invoice_heading", ""))
         self.txt_state.setText(shop.get("state", ""))
+        self.txt_state_code.setText(shop.get("state_code", ""))
         self.txt_jurisdiction.setText(shop.get("jurisdiction", ""))
         self.txt_prefix.setText(shop.get("invoice_prefix", "JB"))
+        self.spn_default_tax.setValue(shop.get("default_tax", 3.0))
         self.txt_bank_name.setText(shop.get("bank_name", ""))
         self.txt_acc_name.setText(shop.get("account_name", ""))
         self.txt_acc_no.setText(shop.get("account_number", ""))
@@ -1760,11 +1774,12 @@ class SettingsPage(QWidget):
             "email":            self.txt_email.text().strip(),
             "invoice_heading":  self.txt_invoice_heading.text().strip(),
             "state":          self.txt_state.text().strip(),
+            "state_code":     self.txt_state_code.text().strip(),
             "jurisdiction":   self.txt_jurisdiction.text().strip(),
             "invoice_prefix": self.txt_prefix.text().strip() or "JB",
             "categories":     ", ".join(cats),
             "item_groups":    ", ".join(groups),
-            "default_tax":    3.0,
+            "default_tax":    self.spn_default_tax.value(),
             "bank_name":      self.txt_bank_name.text().strip(),
             "account_name":   self.txt_acc_name.text().strip(),
             "account_number": self.txt_acc_no.text().strip(),

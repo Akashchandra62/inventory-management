@@ -16,7 +16,9 @@ from app.utils import format_currency
 from app.printer_helper import save_invoice_as_pdf
 from services.invoice_service import create_invoice
 from services.customer_service import get_all_customers
-from services.item_catalog_service import get_item_by_code, get_names as get_catalog_names, add_catalog_item
+from services.item_catalog_service import (
+    get_item_by_code, get_item_by_name, get_names as get_catalog_names, add_catalog_item
+)
 from services.metal_service import get_metals, add_metal as _add_metal_rec
 
 
@@ -32,35 +34,36 @@ class InvoicePage(QWidget):
         self._build_ui()
 
     def _build_ui(self):
-        scroll = QScrollArea(self)
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.NoFrame)
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(0, 0, 0, 0)
-        outer.addWidget(scroll)
-
-        container = QWidget()
-        scroll.setWidget(container)
-        root = QVBoxLayout(container)
-        root.setContentsMargins(25, 20, 25, 20)
-        root.setSpacing(16)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(12, 8, 12, 6)
+        root.setSpacing(6)
 
         # Title bar
         top = QHBoxLayout()
         title = QLabel("🧾  New Invoice")
-        title.setFont(QFont("Segoe UI", 16, QFont.Bold))
+        title.setFont(QFont("Segoe UI", 13, QFont.Bold))
         self._inv_num_lbl = QLabel()
-        self._inv_num_lbl.setStyleSheet("color: #f39c12; font-size: 14px; font-weight: bold;")
+        self._inv_num_lbl.setStyleSheet("color: #f39c12; font-size: 12px; font-weight: bold;")
+
+        btn_clear = QPushButton("🔄  New / Clear")
+        btn_clear.setStyleSheet(
+            "QPushButton { background:#7f8c8d; color:white; border-radius:5px; padding:4px 12px; font-size:12px; }"
+            "QPushButton:hover { background:#95a5a6; }"
+        )
+        btn_clear.clicked.connect(self._clear_all)
+
         top.addWidget(title)
         top.addStretch()
         top.addWidget(self._inv_num_lbl)
+        top.addSpacing(12)
+        top.addWidget(btn_clear)
         root.addLayout(top)
 
         # ── Customer Section (two rows) ──────────────────────────
         cust_grp = QGroupBox("Customer Details")
         cv = QVBoxLayout(cust_grp)
-        cv.setSpacing(5)
-        cv.setContentsMargins(10, 8, 10, 8)
+        cv.setSpacing(3)
+        cv.setContentsMargins(8, 4, 8, 4)
 
         def _lbl(text, w=70):
             l = QLabel(text)
@@ -77,7 +80,7 @@ class InvoicePage(QWidget):
         self.txt_cust_gst = QLineEdit(); self.txt_cust_gst.setPlaceholderText("GST No.")
         for w in (self.txt_cmobile, self.txt_cname, self.txt_caddr,
                   self.txt_cemail, self.txt_cust_gst):
-            w.setMinimumHeight(32)
+            w.setMinimumHeight(26)
         row1.addWidget(_lbl("Mobile *")); row1.addWidget(self.txt_cmobile, 2)
         row1.addWidget(_lbl("Name *"));   row1.addWidget(self.txt_cname, 3)
         row1.addWidget(_lbl("Address"));  row1.addWidget(self.txt_caddr, 3)
@@ -89,7 +92,7 @@ class InvoicePage(QWidget):
         self.txt_aadhaar = QLineEdit(); self.txt_aadhaar.setPlaceholderText("Aadhaar No. (12 digits)")
         self.txt_pan     = QLineEdit(); self.txt_pan.setPlaceholderText("PAN No.")
         for w in (self.txt_aadhaar, self.txt_pan):
-            w.setMinimumHeight(32)
+            w.setMinimumHeight(26)
         self.txt_pan.setMaximumWidth(160)
         row2.addWidget(_lbl("Aadhaar", 60)); row2.addWidget(self.txt_aadhaar, 2)
         row2.addWidget(_lbl("PAN", 36));      row2.addWidget(self.txt_pan)
@@ -107,12 +110,12 @@ class InvoicePage(QWidget):
         items_grp = QGroupBox("Invoice Items")
         items_grp.setStyleSheet(
             "QGroupBox{font-size:11px;color:#7f8c8d;border:1px solid #dfe6e9;"
-            "border-radius:6px;margin-top:14px;padding-top:8px;}"
+            "border-radius:6px;margin-top:8px;padding-top:4px;}"
             "QGroupBox::title{subcontrol-origin:margin;left:10px;padding:0 4px;}"
         )
         itl = QVBoxLayout(items_grp)
-        itl.setContentsMargins(6, 10, 6, 6)
-        itl.setSpacing(4)
+        itl.setContentsMargins(4, 4, 4, 4)
+        itl.setSpacing(2)
 
         # ── Quick-add toolbar ─────────────────────────────────
         qa_bar = QHBoxLayout()
@@ -143,18 +146,18 @@ class InvoicePage(QWidget):
         itl.addLayout(qa_bar)
 
         self.tbl_items = QTableWidget()
-        self.tbl_items.setColumnCount(14)
+        self.tbl_items.setColumnCount(15)
         self.tbl_items.setHorizontalHeaderLabels([
-            "#", "Tag/RFID", "Item Name", "HUID/Remarks", "Purity", "GWT g", "NWT g",
+            "#", "Tag/RFID", "Item Name", "HUID/Remarks", "Purity",
+            "GWT g", "Less g", "NWT g",
             "Pcs", "Rate ₹/g", "MK", "MK ₹", "Other ₹", "Total ₹", ""
         ])
         hdr = self.tbl_items.horizontalHeader()
         hdr.setSectionResizeMode(2, QHeaderView.Stretch)
-        # col 0 (#) and col 13 (delete) are truly fixed; all others are Interactive
-        # so the user can drag column borders to resize on any screen size.
-        _fixed_cols       = {0: 28, 13: 30}
-        _interactive_cols = {1: 90, 3: 150, 4: 78, 5: 82, 6: 82,
-                             7: 48, 8: 96, 9: 114, 10: 72, 11: 84, 12: 102}
+        # col 0 (#) and col 14 (delete) are truly fixed; all others are Interactive
+        _fixed_cols       = {0: 28, 14: 30}
+        _interactive_cols = {1: 90, 3: 150, 4: 78, 5: 80, 6: 68, 7: 80,
+                             8: 48, 9: 96, 10: 114, 11: 72, 12: 84, 13: 102}
         for col, w in _fixed_cols.items():
             self.tbl_items.setColumnWidth(col, w)
             hdr.setSectionResizeMode(col, QHeaderView.Fixed)
@@ -165,22 +168,22 @@ class InvoicePage(QWidget):
         self.tbl_items.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.tbl_items.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.tbl_items.setAlternatingRowColors(True)
-        self.tbl_items.setMinimumHeight(200)
-        self.tbl_items.verticalHeader().setDefaultSectionSize(36)
+        self.tbl_items.setMinimumHeight(80)
+        self.tbl_items.verticalHeader().setDefaultSectionSize(32)
 
         self._row_widgets: list[dict] = []
         self._append_item_row()   # start with one blank row
 
         itl.addWidget(self.tbl_items)
-        root.addWidget(items_grp)
+        root.addWidget(items_grp, 1)
 
         # ── Tax + Payment ─────────────────────────────────────
-        bottom = QHBoxLayout(); bottom.setSpacing(16)
+        bottom = QHBoxLayout(); bottom.setSpacing(8)
 
         # ── Payment Details ───────────────────────────────────
         pay_grp = QGroupBox("Payment Details")
         pfl = QFormLayout(pay_grp)
-        pfl.setSpacing(7)
+        pfl.setSpacing(4)
         pfl.setLabelAlignment(Qt.AlignRight)
         pfl.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
 
@@ -191,7 +194,7 @@ class InvoicePage(QWidget):
             e = QLineEdit()
             e.setPlaceholderText(placeholder)
             e.setValidator(_num_validator)
-            e.setMinimumHeight(32)
+            e.setMinimumHeight(26)
             return e
 
         def _pay_row(amt_edit, detail_edit):
@@ -219,66 +222,118 @@ class InvoicePage(QWidget):
         self.txt_card = _money_edit()
         self.txt_card_details = QLineEdit()
         self.txt_card_details.setPlaceholderText("Card / last 4 digits")
-        self.txt_card_details.setMinimumHeight(32)
+        self.txt_card_details.setMinimumHeight(26)
         pfl.addRow("Card:", _pay_row(self.txt_card, self.txt_card_details))
 
         self.txt_cheque = _money_edit()
         self.txt_cheque_details = QLineEdit()
         self.txt_cheque_details.setPlaceholderText("Cheque no. / bank")
-        self.txt_cheque_details.setMinimumHeight(32)
+        self.txt_cheque_details.setMinimumHeight(26)
         pfl.addRow("Cheque:", _pay_row(self.txt_cheque, self.txt_cheque_details))
 
         self.txt_upi = _money_edit()
         pfl.addRow("UPI:", _single_row(self.txt_upi))
 
+        self.txt_old_purchase = _money_edit()
+        _op_lbl = QLabel("(-) Old Purchase:")
+        _op_lbl.setStyleSheet("color:#e67e22; font-weight:600;")
+        pfl.addRow(_op_lbl, _single_row(self.txt_old_purchase))
+
+        self.txt_advance = _money_edit()
+        _adv_lbl = QLabel("(-) Advance:")
+        _adv_lbl.setStyleSheet("color:#e67e22; font-weight:600;")
+        pfl.addRow(_adv_lbl, _single_row(self.txt_advance))
+
+        self.txt_roundoff = _money_edit("0.00")
+        _ro_auto = QPushButton("Auto")
+        _ro_auto.setFixedHeight(26)
+        _ro_auto.setStyleSheet(
+            "QPushButton{background:#2980b9;color:white;border-radius:4px;"
+            "padding:1px 8px;font-size:10px;font-weight:bold;border:none;}"
+            "QPushButton:hover{background:#2471a3;}"
+        )
+        _ro_auto.clicked.connect(self._auto_roundoff)
+        _ro_w = QWidget(); _ro_w.setStyleSheet("background:transparent;")
+        _ro_h = QHBoxLayout(_ro_w); _ro_h.setContentsMargins(0, 0, 0, 0); _ro_h.setSpacing(4)
+        _ro_h.addWidget(_ro_auto)
+        _ro_h.addWidget(self.txt_roundoff, 1)
+        pfl.addRow("Round Off (-):", _ro_w)
+
         self.txt_due = QLineEdit("0.00")
         self.txt_due.setReadOnly(True)
-        self.txt_due.setMinimumHeight(32)
+        self.txt_due.setMinimumHeight(26)
         self.txt_due.setStyleSheet(
             "QLineEdit { background:#fef9e7; color:#e74c3c; font-weight:bold;"
             " border:1px solid #f9ca24; border-radius:4px; padding:4px 8px; }"
         )
         pfl.addRow("Due Amount:", _single_row(self.txt_due))
 
+        # ── Refund row ────────────────────────────────────────────
+        self.txt_refund = _money_edit()
+        self.txt_refund.setMinimumHeight(30)
+        self.cmb_refund_mode = QComboBox()
+        self.cmb_refund_mode.addItems(["Cash", "Card", "UPI", "Cheque", "Bank Transfer", "Other"])
+        self.cmb_refund_mode.setMinimumHeight(30)
+        self.cmb_refund_mode.setStyleSheet(
+            "QComboBox{border:1px solid #ced4da;border-radius:4px;padding:2px 6px;"
+            "font-size:12px;background:white;}"
+            "QComboBox::drop-down{border:none;width:16px;}"
+        )
+        _ref_w = QWidget(); _ref_w.setStyleSheet("background:transparent;")
+        _ref_w.setMinimumHeight(30)
+        _ref_h = QHBoxLayout(_ref_w); _ref_h.setContentsMargins(0, 0, 0, 0); _ref_h.setSpacing(4)
+        _ref_rupee = QLabel("₹"); _ref_rupee.setStyleSheet("color:#555;font-weight:600;")
+        _ref_h.addWidget(_ref_rupee)
+        _ref_h.addWidget(self.txt_refund, 1)
+        _ref_h.addWidget(self.cmb_refund_mode, 1)
+        _ref_lbl = QLabel("Refund Given:")
+        _ref_lbl.setStyleSheet("color:#27ae60; font-weight:600;")
+        pfl.addRow(_ref_lbl, _ref_w)
+
         self.txt_due_date = QLineEdit()
         self.txt_due_date.setPlaceholderText("e.g. 31 Dec 25")
-        self.txt_due_date.setMinimumHeight(32)
+        self.txt_due_date.setMinimumHeight(26)
         pfl.addRow("Due Date:", self.txt_due_date)
 
         self.txt_remarks = QLineEdit()
         self.txt_remarks.setPlaceholderText("Remarks (optional)")
-        self.txt_remarks.setMinimumHeight(32)
+        self.txt_remarks.setMinimumHeight(26)
         pfl.addRow("Remarks:", self.txt_remarks)
 
         # Auto-recalc due whenever a payment field changes
-        for f in (self.txt_cash, self.txt_card, self.txt_cheque, self.txt_upi):
+        for f in (self.txt_cash, self.txt_card, self.txt_cheque, self.txt_upi,
+                  self.txt_old_purchase, self.txt_advance, self.txt_roundoff):
             f.textChanged.connect(self._recalc_due)
 
-        # Enter key navigates through payment fields (like Tab)
-        self.txt_cash.returnPressed.connect(lambda: self.txt_card.setFocus())
-        self.txt_card.returnPressed.connect(lambda: self.txt_card_details.setFocus())
-        self.txt_card_details.returnPressed.connect(lambda: self.txt_cheque.setFocus())
-        self.txt_cheque.returnPressed.connect(lambda: self.txt_cheque_details.setFocus())
-        self.txt_cheque_details.returnPressed.connect(lambda: self.txt_upi.setFocus())
-        self.txt_upi.returnPressed.connect(lambda: self.txt_due_date.setFocus())
-        self.txt_due_date.returnPressed.connect(lambda: self.txt_remarks.setFocus())
+        # Enter-key chain for payment section — uses event filter (not returnPressed)
+        # because returnPressed is blocked by QDoubleValidator on empty/zero fields.
+        _pay_chain = [
+            self.txt_cash, self.txt_card, self.txt_card_details,
+            self.txt_cheque, self.txt_cheque_details,
+            self.txt_upi, self.txt_old_purchase, self.txt_advance,
+            self.txt_roundoff, self.txt_refund, self.txt_due_date, self.txt_remarks,
+        ]
+        for _pi, _pw in enumerate(_pay_chain):
+            _pw._pay_chain = _pay_chain
+            _pw._pay_idx   = _pi
+            _pw.installEventFilter(self)
 
         bottom.addWidget(pay_grp, 3)
 
         # ── Totals / Tax ──────────────────────────────────────
         totals_frame = QFrame()
         totals_frame.setStyleSheet(
-            "QFrame { background:white; border:1px solid #e0e0e0; border-radius:6px; padding:10px; }"
+            "QFrame { background:white; border:1px solid #e0e0e0; border-radius:6px; padding:6px; }"
         )
         tfl = QFormLayout(totals_frame)
         tfl.setLabelAlignment(Qt.AlignRight)
-        tfl.setSpacing(8)
+        tfl.setSpacing(5)
         tfl.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
 
         def _tax_spn(default=0.0):
             s = QDoubleSpinBox()
             s.setRange(0, 28); s.setDecimals(2); s.setSuffix(" %"); s.setValue(default)
-            s.setMinimumHeight(30); s.setMaximumWidth(80)
+            s.setMinimumHeight(26); s.setMaximumWidth(80)
             s.setButtonSymbols(QAbstractSpinBox.NoButtons)
             return s
 
@@ -306,12 +361,30 @@ class InvoicePage(QWidget):
         self.lbl_igst_amt = _amt_lbl("#2980b9")
 
         self.lbl_grand = QLabel("₹ 0.00")
-        self.lbl_grand.setFont(QFont("Segoe UI", 14, QFont.Bold))
+        self.lbl_grand.setFont(QFont("Segoe UI", 12, QFont.Bold))
         self.lbl_grand.setStyleSheet("color:#27ae60;")
         self.lbl_grand.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
 
-        for spn in (self.spn_cgst, self.spn_sgst, self.spn_igst):
-            spn.valueChanged.connect(self._recalc_totals)
+        def _on_igst_changed(v):
+            if v > 0:
+                self.spn_cgst.blockSignals(True)
+                self.spn_sgst.blockSignals(True)
+                self.spn_cgst.setValue(0.0)
+                self.spn_sgst.setValue(0.0)
+                self.spn_cgst.blockSignals(False)
+                self.spn_sgst.blockSignals(False)
+            self._recalc_totals()
+
+        def _on_cgst_sgst_changed(v):
+            if v > 0:
+                self.spn_igst.blockSignals(True)
+                self.spn_igst.setValue(0.0)
+                self.spn_igst.blockSignals(False)
+            self._recalc_totals()
+
+        self.spn_igst.valueChanged.connect(_on_igst_changed)
+        self.spn_cgst.valueChanged.connect(_on_cgst_sgst_changed)
+        self.spn_sgst.valueChanged.connect(_on_cgst_sgst_changed)
 
         tfl.addRow("Gross Amount:", self.lbl_subtotal)
         tfl.addRow("CGST:",  _tax_row_widget(self.spn_cgst, self.lbl_cgst_amt))
@@ -328,36 +401,36 @@ class InvoicePage(QWidget):
         notes_row.addWidget(QLabel("Notes:"))
         self.txt_notes = QLineEdit()
         self.txt_notes.setPlaceholderText("Any special notes (optional)")
-        self.txt_notes.setMinimumHeight(34)
+        self.txt_notes.setMinimumHeight(26)
         notes_row.addWidget(self.txt_notes)
         root.addLayout(notes_row)
 
         # ── Action Buttons ────────────────────────────────────
-        act_row = QHBoxLayout(); act_row.setSpacing(12)
+        act_row = QHBoxLayout(); act_row.setSpacing(8)
 
-        btn_clear = QPushButton("🔄  New / Clear")
-        btn_clear.setStyleSheet(
-            "QPushButton { background:#7f8c8d; color:white; border-radius:5px; padding:9px 18px; }"
-            "QPushButton:hover { background:#95a5a6; }"
+        btn_preview = QPushButton("👁  Preview PDF")
+        btn_preview.setStyleSheet(
+            "QPushButton { background:#8e44ad; color:white; border-radius:5px; padding:6px 14px; font-weight:bold; }"
+            "QPushButton:hover { background:#7d3c98; }"
         )
-        btn_clear.clicked.connect(self._clear_all)
+        btn_preview.clicked.connect(self._preview_invoice)
 
         btn_save = QPushButton("💾  Save Invoice")
         btn_save.setStyleSheet(
-            "QPushButton { background:#2980b9; color:white; border-radius:5px; padding:9px 18px; font-weight:bold; }"
+            "QPushButton { background:#2980b9; color:white; border-radius:5px; padding:6px 14px; font-weight:bold; }"
             "QPushButton:hover { background:#2471a3; }"
         )
         btn_save.clicked.connect(self._save_invoice)
 
         btn_print = QPushButton("🖨  Save && Print PDF")
         btn_print.setStyleSheet(
-            "QPushButton { background:#f39c12; color:white; border-radius:5px; padding:9px 18px; font-weight:bold; }"
+            "QPushButton { background:#f39c12; color:white; border-radius:5px; padding:6px 14px; font-weight:bold; }"
             "QPushButton:hover { background:#e67e22; }"
         )
         btn_print.clicked.connect(self._save_and_print)
 
         act_row.addStretch()
-        act_row.addWidget(btn_clear)
+        act_row.addWidget(btn_preview)
         act_row.addWidget(btn_save)
         act_row.addWidget(btn_print)
         root.addLayout(act_row)
@@ -397,7 +470,7 @@ class InvoicePage(QWidget):
         """Append a new editable row; focus its Item Name field."""
         row_idx = self.tbl_items.rowCount()
         self.tbl_items.insertRow(row_idx)
-        self.tbl_items.setRowHeight(row_idx, 36)
+        self.tbl_items.setRowHeight(row_idx, 32)
 
         lbl_num = QLabel(str(row_idx + 1))
         lbl_num.setAlignment(Qt.AlignCenter)
@@ -464,6 +537,7 @@ class InvoicePage(QWidget):
         )
 
         w_gwt   = _dspn(dec=3)
+        w_lwt   = _dspn(dec=3)   # less / deduction weight
         w_nwt   = _dspn(dec=3)
         w_qty   = _ispn()
         w_rate  = _dspn(dec=2)
@@ -476,7 +550,7 @@ class InvoicePage(QWidget):
         mk_hl.setContentsMargins(2, 1, 2, 1); mk_hl.setSpacing(2)
 
         w_mk_btn = QPushButton("%")
-        w_mk_btn.setFixedSize(24, 26)
+        w_mk_btn.setFixedSize(24, 30)
         w_mk_btn.setStyleSheet(
             "QPushButton{background:#8e44ad;color:white;border-radius:3px;"
             "font-weight:bold;font-size:10px;border:none;}"
@@ -510,7 +584,7 @@ class InvoicePage(QWidget):
         )
 
         for col, widget in enumerate([
-            lbl_num, w_tag, w_name, w_huid, w_purity, w_gwt, w_nwt,
+            lbl_num, w_tag, w_name, w_huid, w_purity, w_gwt, w_lwt, w_nwt,
             w_qty, w_rate, mk_wrap, w_mk_lbl, w_other, w_total_lbl, w_del
         ]):
             self.tbl_items.setCellWidget(row_idx, col, widget)
@@ -518,7 +592,7 @@ class InvoicePage(QWidget):
         rd = {
             'tag': w_tag, 'name': w_name, 'huid': w_huid,
             'purity': w_purity,
-            'gwt': w_gwt,   'nwt': w_nwt,
+            'gwt': w_gwt, 'lwt': w_lwt, 'nwt': w_nwt,
             'qty': w_qty,   'rate': w_rate,
             'mk_btn': w_mk_btn, 'mk_spn': w_mk_spn,
             'mk_lbl': w_mk_lbl, 'mk_is_pct': mk_is_pct,
@@ -526,8 +600,8 @@ class InvoicePage(QWidget):
         }
         self._row_widgets.append(rd)
 
-        # Enter-key chain: tag→name→huid→purity→gwt→nwt→qty→rate→mk_spn→other→(new row)
-        chain = [w_tag, w_name, w_huid, w_purity, w_gwt, w_nwt, w_qty, w_rate, w_mk_spn, w_other]
+        # Enter-key chain: tag→name→huid→purity→gwt→lwt→nwt→qty→rate→mk_spn→other→(new row)
+        chain = [w_tag, w_name, w_huid, w_purity, w_gwt, w_lwt, w_nwt, w_qty, w_rate, w_mk_spn, w_other]
         rd['chain'] = chain
         for ci, w in enumerate(chain):
             if not isinstance(w, QLineEdit):
@@ -538,14 +612,22 @@ class InvoicePage(QWidget):
         w_name.returnPressed.connect(lambda _rd=rd: self._name_code_lookup(_rd))
         w_huid.returnPressed.connect(lambda _rd=rd: self._focus_and_select(_rd['purity']))
 
-        # GWT → auto-sync NWT
-        def _gwt_chg(v, _rd=rd):
+        # When a name is chosen from the autocomplete dropdown, fill purity + rate
+        if w_name.completer():
+            w_name.completer().activated.connect(
+                lambda name, _rd=rd: self._autofill_item_by_name(name, _rd)
+            )
+
+        # GWT or LWT change → NWT = GWT − LWT (clamped to 0)
+        def _sync_nwt(_rd=rd):
+            nwt = max(0.0, round(_rd['gwt'].value() - _rd['lwt'].value(), 3))
             _rd['nwt'].blockSignals(True)
-            _rd['nwt'].setValue(v)
+            _rd['nwt'].setValue(nwt)
             _rd['nwt'].blockSignals(False)
             self._row_calc(_rd)
             self._rebuild_items_from_table()
-        w_gwt.valueChanged.connect(_gwt_chg)
+        w_gwt.valueChanged.connect(lambda _: _sync_nwt())
+        w_lwt.valueChanged.connect(lambda _: _sync_nwt())
 
         def _any_chg(*_, _rd=rd):
             self._row_calc(_rd)
@@ -616,7 +698,7 @@ class InvoicePage(QWidget):
                 'purity':        rd['purity'].currentText(),
                 'quantity':      rd['qty'].value(),
                 'weight':        gwt,
-                'less_weight':   round(gwt - nwt, 3),
+                'less_weight':   round(rd['lwt'].value(), 3),
                 'nett_weight':   nwt,
                 'rate':          rate,
                 'making_charge': mk_a,
@@ -633,7 +715,7 @@ class InvoicePage(QWidget):
             rd['tag'].clear()
             rd['name'].clear()
             rd['huid'].clear()
-            for spn in (rd['gwt'], rd['nwt'], rd['rate'], rd['mk_spn'], rd['other']):
+            for spn in (rd['gwt'], rd['lwt'], rd['nwt'], rd['rate'], rd['mk_spn'], rd['other']):
                 spn.setValue(0)
             rd['qty'].setValue(1)
             rd['mk_lbl'].setText('0.00')
@@ -662,46 +744,52 @@ class InvoicePage(QWidget):
             widget.selectAll()
 
     def _name_code_lookup(self, rd: dict):
-        """On Enter in item name: check if text is a catalog code → auto-fill."""
+        """On Enter in item name: try code lookup first, then name lookup."""
         text = rd['name'].text().strip()
         if text:
+            # 1. Try shortcut code (e.g. "GN1")
             item = get_item_by_code(text)
             if item:
-                # Replace code with actual item name
                 rd['name'].blockSignals(True)
                 rd['name'].setText(item.get('name', text))
                 rd['name'].blockSignals(False)
-                # Set purity
-                purity = item.get('purity', '')
-                if purity:
-                    idx = rd['purity'].findText(purity)
-                    if idx >= 0:
-                        rd['purity'].setCurrentIndex(idx)
-                    else:
-                        rd['purity'].setCurrentText(purity)
-                # Set rate from catalog item
-                rate = float(item.get('rate') or 0)
-                if rate:
-                    rd['rate'].setValue(rate)
-                # Jump straight to HUID (purity & rate already filled)
-                QTimer.singleShot(0, lambda: self._focus_and_select(rd['huid']))
+                self._apply_catalog_item(item, rd)
                 return
-        # Default: advance to HUID field
+
+            # 2. Try exact name match (user typed full name or picked via autocomplete + Enter)
+            item = get_item_by_name(text)
+            if item:
+                self._apply_catalog_item(item, rd)
+                return
+
+        # No match — just advance to HUID
         QTimer.singleShot(0, lambda: self._focus_and_select(rd['huid']))
 
     def eventFilter(self, obj, event):
-        """Enter key on any item-chain widget advances to the next; Enter on last adds a new row."""
-        if event.type() == QEvent.KeyPress:
-            if event.key() in (Qt.Key_Return, Qt.Key_Enter):
-                if hasattr(obj, '_item_rd') and hasattr(obj, '_chain_idx'):
-                    rd    = obj._item_rd
-                    chain = rd['chain']
-                    idx   = obj._chain_idx
-                    if idx + 1 < len(chain):
-                        QTimer.singleShot(0, lambda n=chain[idx + 1]: self._focus_and_select(n))
-                    else:
+        """Enter key navigation for item-table rows and payment fields."""
+        if event.type() == QEvent.KeyPress and event.key() in (Qt.Key_Return, Qt.Key_Enter):
+            # ── Item table spinbox/combobox chain ───────────────
+            if hasattr(obj, '_item_rd') and hasattr(obj, '_chain_idx'):
+                rd    = obj._item_rd
+                chain = rd['chain']
+                idx   = obj._chain_idx
+                if idx + 1 < len(chain):
+                    QTimer.singleShot(0, lambda n=chain[idx + 1]: self._focus_and_select(n))
+                else:
+                    if rd['name'].text().strip():
                         QTimer.singleShot(0, self._append_item_row)
-                    return False   # let widget also commit its value
+                    else:
+                        QTimer.singleShot(0, lambda: self._focus_and_select(self.txt_cash))
+                return False   # let the widget commit its value first
+
+            # ── Payment section chain ────────────────────────────
+            if hasattr(obj, '_pay_chain') and hasattr(obj, '_pay_idx'):
+                chain = obj._pay_chain
+                idx   = obj._pay_idx
+                if idx + 1 < len(chain):
+                    QTimer.singleShot(0, lambda n=chain[idx + 1]: self._focus_and_select(n))
+                return False
+
         return super().eventFilter(obj, event)
 
     def _refresh_inv_number(self):
@@ -728,17 +816,32 @@ class InvoicePage(QWidget):
         self._recalc_due()
 
     def _recalc_due(self, *_):
-        """Due = Grand Total − sum of all payment modes received."""
+        """Due = (Grand Total − Round Off) − all payments. Also updates NET PAYABLE label."""
         def _v(le):
             try: return float(le.text())
             except ValueError: return 0.0
-        paid = _v(self.txt_cash) + _v(self.txt_card) + _v(self.txt_cheque) + _v(self.txt_upi)
-        due  = round(max(0.0, getattr(self, '_grand_total', 0.0) - paid), 2)
+        round_off = _v(self.txt_roundoff)
+        paid = (_v(self.txt_cash) + _v(self.txt_card) + _v(self.txt_cheque) + _v(self.txt_upi)
+                + _v(self.txt_old_purchase) + _v(self.txt_advance))
+        net = max(0.0, getattr(self, '_grand_total', 0.0) - round_off)
+        due = round(max(0.0, net - paid), 2)
+        self.lbl_grand.setText(format_currency(net))
         self.txt_due.setText(f"{due:.2f}")
 
+    def _auto_roundoff(self):
+        """Fill round-off with the decimal fraction of the current grand total."""
+        grand = getattr(self, '_grand_total', 0.0)
+        frac  = round(grand % 1, 2)
+        self.txt_roundoff.setText(f"{frac:.2f}")
+
     def _validate(self) -> bool:
+        if not self.txt_cmobile.text().strip():
+            QMessageBox.warning(self, "Validation", "Customer mobile number is required.")
+            self.txt_cmobile.setFocus()
+            return False
         if not self.txt_cname.text().strip():
             QMessageBox.warning(self, "Validation", "Customer name is required.")
+            self.txt_cname.setFocus()
             return False
         if not self._items:
             QMessageBox.warning(self, "Validation", "Add at least one item.")
@@ -772,19 +875,47 @@ class InvoicePage(QWidget):
             "sgst_amount":      sgst_amt,
             "igst_amount":      igst_amt,
             "grand_total":      grand,
-            "cash_paid":        float(self.txt_cash.text()   or 0),
-            "card_paid":        float(self.txt_card.text()   or 0),
+            "cash_paid":        float(self.txt_cash.text()         or 0),
+            "card_paid":        float(self.txt_card.text()         or 0),
             "card_details":     self.txt_card_details.text().strip(),
-            "cheque_paid":      float(self.txt_cheque.text() or 0),
+            "cheque_paid":      float(self.txt_cheque.text()       or 0),
             "cheque_details":   self.txt_cheque_details.text().strip(),
-            "upi_paid":         float(self.txt_upi.text()    or 0),
-            "due_amount":       float(self.txt_due.text()    or 0),
+            "upi_paid":         float(self.txt_upi.text()          or 0),
+            "old_purchase":     float(self.txt_old_purchase.text() or 0),
+            "advance_paid":     float(self.txt_advance.text()      or 0),
+            "round_off":        float(self.txt_roundoff.text()     or 0),
+            "due_amount":       float(self.txt_due.text()          or 0),
+            "refund_amount":    float(self.txt_refund.text()       or 0),
+            "refund_mode":      self.cmb_refund_mode.currentText(),
             "due_date":         self.txt_due_date.text().strip(),
             "remarks":          self.txt_remarks.text().strip(),
             "notes":            self.txt_notes.text().strip(),
             "tax_percent":      cgst_pct + sgst_pct + igst_pct,
             "tax_amount":       cgst_amt + sgst_amt + igst_amt,
         }
+
+    def _preview_invoice(self):
+        if not self._validate():
+            return
+        import os, traceback
+        from datetime import date
+        from app.constants import INVOICES_PRINT
+        from app.printer_helper import _generate_pdf
+
+        preview_data = self._build_invoice_data()
+        prefix = AppConfig.invoice_prefix()
+        last   = AppConfig.last_invoice_number()
+        preview_data.setdefault("invoice_number", f"{prefix}-{last + 1:04d} (Preview)")
+        preview_data.setdefault("date", date.today().strftime("%Y-%m-%d"))
+
+        try:
+            os.makedirs(INVOICES_PRINT, exist_ok=True)
+            preview_path = os.path.join(INVOICES_PRINT, "invoice_preview.pdf")
+            _generate_pdf(preview_data, preview_path)
+            os.startfile(preview_path)
+        except Exception as e:
+            traceback.print_exc()
+            QMessageBox.critical(self, "Preview Error", f"Could not generate preview:\n{e}")
 
     def _save_invoice(self):
         if not self._validate():
@@ -794,9 +925,9 @@ class InvoicePage(QWidget):
             extra["customer_name"], extra["customer_mobile"],
             extra["customer_address"], list(self._items),
             extra["tax_percent"], notes=extra.get("notes", ""),
-            customer_email=extra.get("customer_email", "")
+            customer_email=extra.get("customer_email", ""),
+            extra=extra,
         )
-        inv.update(extra)
         self._last_invoice = inv
         QMessageBox.information(self, "Saved", f"Invoice {inv['invoice_number']} saved!")
         self._clear_all()
@@ -809,9 +940,9 @@ class InvoicePage(QWidget):
             extra["customer_name"], extra["customer_mobile"],
             extra["customer_address"], list(self._items),
             extra["tax_percent"], notes=extra.get("notes", ""),
-            customer_email=extra.get("customer_email", "")
+            customer_email=extra.get("customer_email", ""),
+            extra=extra,
         )
-        inv.update(extra)
         self._last_invoice = inv
         self._clear_all()
         save_invoice_as_pdf(inv, parent=self)
@@ -1067,6 +1198,29 @@ class InvoicePage(QWidget):
             "Go to Settings → Metals to edit it any time."
         )
 
+    def _apply_catalog_item(self, item: dict, rd: dict):
+        """Fill purity and rate into a row from a catalog item dict, then focus GWT."""
+        purity = item.get('purity', '')
+        if purity:
+            idx = rd['purity'].findText(purity)
+            if idx >= 0:
+                rd['purity'].setCurrentIndex(idx)
+            else:
+                rd['purity'].setCurrentText(purity)
+        rate = float(item.get('rate') or 0)
+        if rate:
+            rd['rate'].setValue(rate)
+        self._row_calc(rd)
+        self._rebuild_items_from_table()
+        # Purity + rate are filled — jump straight to GWT
+        QTimer.singleShot(0, lambda: self._focus_and_select(rd['gwt']))
+
+    def _autofill_item_by_name(self, name: str, rd: dict):
+        """Called when the user picks a name from the autocomplete dropdown."""
+        item = get_item_by_name(name)
+        if item:
+            self._apply_catalog_item(item, rd)
+
     def _refresh_item_completers(self):
         """Update the autocomplete list on every item name field in the current table."""
         names = get_catalog_names()
@@ -1076,6 +1230,9 @@ class InvoicePage(QWidget):
             c.setCaseSensitivity(Qt.CaseInsensitive)
             c.setFilterMode(Qt.MatchContains)
             w.setCompleter(c)
+            c.activated.connect(
+                lambda name, _rd=rd: self._autofill_item_by_name(name, _rd)
+            )
 
     def _clear_all(self):
         self.txt_cname.clear()
@@ -1091,8 +1248,10 @@ class InvoicePage(QWidget):
         self.txt_card_details.clear()
         self.txt_cheque_details.clear()
         for f in (self.txt_cash, self.txt_card, self.txt_cheque,
-                  self.txt_upi, self.txt_due):
+                  self.txt_upi, self.txt_old_purchase, self.txt_advance,
+                  self.txt_roundoff, self.txt_refund, self.txt_due):
             f.clear()
+        self.cmb_refund_mode.setCurrentIndex(0)
         self._reset_items_table()
         self.spn_cgst.setValue(1.5)
         self.spn_sgst.setValue(1.5)

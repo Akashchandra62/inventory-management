@@ -43,7 +43,8 @@ def _qt_render(text: str, font_pt: int = 9, dpi: int = 300):
         painter.drawText(6, fm.ascent() + 3, text)
         painter.end()
 
-        path = tempfile.mktemp(suffix='.png')
+        fd, path = tempfile.mkstemp(suffix='.png')
+        os.close(fd)
         pix.save(path, 'PNG')
 
         w_mm = w / dpi * 25.4
@@ -220,9 +221,13 @@ def _generate_pdf(invoice: dict, path: str):
     amt_after_gst    = round(subtotal + cgst_amt + sgst_amt, 2)
     grand_total      = float(invoice.get("grand_total", amt_after_gst))
     round_off        = round(grand_total - amt_after_gst, 2)
-    cash_paid        = float(invoice.get("cash_paid",  0))
-    upi_paid         = float(invoice.get("upi_paid",   0))
-    notes            = invoice.get("notes",            "")
+    cash_paid        = float(invoice.get("cash_paid",    0))
+    upi_paid         = float(invoice.get("upi_paid",     0))
+    card_paid        = float(invoice.get("card_paid",    0))
+    cheque_paid      = float(invoice.get("cheque_paid",  0))
+    old_purchase     = float(invoice.get("old_purchase", 0))
+    advance_paid     = float(invoice.get("advance_paid", 0))
+    notes            = invoice.get("notes",             "")
 
     # ── Page layout constants ──────────────────────────────────
     W, H   = A4
@@ -255,7 +260,7 @@ def _generate_pdf(invoice: dict, path: str):
     def TH(txt):
         """Table header cell."""
         return Paragraph(str(txt),
-                         _ps(size=7, bold=True, align=TA_CENTER, leading=9))
+                         _ps(size=6, bold=True, align=TA_CENTER, leading=8))
 
     def TD(txt, bold=False, align=TA_CENTER, size=8):
         """Table data cell."""
@@ -453,10 +458,10 @@ def _generate_pdf(invoice: dict, path: str):
              16*mm, 12*mm, 12*mm, 12*mm, 18*mm, 22*mm]
 
     hdr_texts = [
-        'S.\nNo', 'Tag/\nRFID', 'PARTICULARS/\nITEM', 'HUID/\nRemarks',
-        'HSN\nCode', 'Purity\nKt/Ct', 'Pcs/\nQTY',
-        'GROSS WT.\n(in Gms)', 'LESS WT.\n(in Gms)', 'NETT WT.\n(in Gms)',
-        'RATE\nPer Gm.', 'Mk/Oth.Chrg.\nPer Gm/Pcs', 'Amount\n(INR)'
+        'S.\nNo', 'Tag/\nRfid', 'Item\nName', 'Huid/\nRemarks',
+        'Hsn\nCode', 'Purity\nKt/Ct', 'Pcs',
+        'Gross Wt\n(in Gms)', 'Less\n(in Gms)', 'Nett Wt\n(in Gms)',
+        'Rate\nPer Gm', 'Mk/Chrg\nPer Gm', 'Amount\n(INR)'
     ]
 
     def _item_metal_name(purity: str) -> str:
@@ -496,8 +501,8 @@ def _generate_pdf(invoice: dict, path: str):
 
             name_p = Paragraph(
                 f'<b>{it.get("name", "")}</b>'
-                f'<br/><font size="7" color="#555555">{cat}</font>',
-                _ps(size=9, bold=True, align=TA_LEFT, leading=12)
+                f'<br/><font size="6" color="#555555">{cat}</font>',
+                _ps(size=7, bold=True, align=TA_LEFT, leading=9)
             )
             rows.append([
                 TD(serial_no),
@@ -507,9 +512,9 @@ def _generate_pdf(invoice: dict, path: str):
                 TD(it.get('hsn_code', '7113')),
                 TD(it.get('purity', '')),
                 TD(it.get('quantity', 1)),
-                TD(f"{gw:.3f}"),
-                TD(f"{lw:.3f}"),
-                TD(f"{nw:.3f}"),
+                TD(f"{gw:.2f}"),
+                TD(f"{lw:.2f}"),
+                TD(f"{nw:.2f}"),
                 TD(f"{float(it.get('rate', 0)):.0f}"),
                 TD(mk_str),
                 TD(f"{amt:,.2f}", bold=True),
@@ -523,9 +528,9 @@ def _generate_pdf(invoice: dict, path: str):
         rows.append([
             metal_lbl,                                      # col 0 — spans 0-6
             TD(''), TD(''), TD(''), TD(''), TD(''), TD(''), # cols 1-6 (merged)
-            TD(f'{gw_grp:.3f}',   bold=True),
+            TD(f'{gw_grp:.2f}',   bold=True),
             TD(''),
-            TD(f'{nw_grp:.3f}',   bold=True),
+            TD(f'{nw_grp:.2f}',   bold=True),
             TD(''), TD(''),
             TD(f'{amt_grp:,.2f}', bold=True),
         ])
@@ -540,9 +545,9 @@ def _generate_pdf(invoice: dict, path: str):
     # Grand totals row
     rows.append([
         TD(''), TD(''), TD(''), TD(''), TD(''), TD(''), TD(''),
-        TD(f"{gross_tot:.3f}", bold=True),
+        TD(f"{gross_tot:.2f}", bold=True),
         TD(''),
-        TD(f"{nett_tot:.3f}",  bold=True),
+        TD(f"{nett_tot:.2f}",  bold=True),
         TD(''), TD(''),
         TD(f"{subtotal:,.2f}", bold=True),
     ])
@@ -556,8 +561,8 @@ def _generate_pdf(invoice: dict, path: str):
         ('GRID',          (0, 0),              (-1, -1),     0.5, BLACK),
         ('ALIGN',         (0, 0),              (-1, -1),     'CENTER'),
         ('VALIGN',        (0, 0),              (-1, -1),     'MIDDLE'),
-        ('TOPPADDING',    (0, 0),              (-1, -1),     3),
-        ('BOTTOMPADDING', (0, 0),              (-1, -1),     3),
+        ('TOPPADDING',    (0, 0),              (-1, -1),     0),
+        ('BOTTOMPADDING', (0, 0),              (-1, -1),     0),
         # item-name column: left-aligned for all data rows
         ('ALIGN',         (2, 1),              (2, n_data_rows), 'LEFT'),
         ('LEFTPADDING',   (2, 1),              (2, n_data_rows), 4),
@@ -593,19 +598,30 @@ def _generate_pdf(invoice: dict, path: str):
     RW = UW - LW        # right column ≈  86 mm
 
     # ── Left: Payment Detail ──────────────────────────────────
-    total_paid = upi_paid + cash_paid
+    total_paid = cash_paid + upi_paid + card_paid + cheque_paid + old_purchase + advance_paid
     if total_paid == 0:
         total_paid = grand_total
 
+    def _pamt(val):
+        """Right-aligned ₹ amount cell for payment rows."""
+        return P(f"₹ {val:,.0f} /-", size=8, align=TA_RIGHT, fontName=_HINDI_FONT)
+
     pay_data = [[P("<b><u>Payment Detail :</u></b>", size=9), '']]
-    if upi_paid > 0:
-        pay_data.append([P("<b>UPI</b>", size=8),
-                         P(f"{upi_paid:,.0f} /-", size=8, align=TA_RIGHT)])
     if cash_paid > 0:
-        pay_data.append([P("<b>Cash</b>", size=8),
-                         P(f"{cash_paid:,.0f} /-", size=8, align=TA_RIGHT)])
+        pay_data.append([P("<b>Cash</b>", size=8), _pamt(cash_paid)])
+    if upi_paid > 0:
+        pay_data.append([P("<b>UPI</b>", size=8), _pamt(upi_paid)])
+    if card_paid > 0:
+        pay_data.append([P("<b>Card</b>", size=8), _pamt(card_paid)])
+    if cheque_paid > 0:
+        pay_data.append([P("<b>Cheque</b>", size=8), _pamt(cheque_paid)])
+    if old_purchase > 0:
+        pay_data.append([P("<b>Old Purchase (-)</b>", size=8), _pamt(old_purchase)])
+    if advance_paid > 0:
+        pay_data.append([P("<b>Advance (-)</b>", size=8), _pamt(advance_paid)])
     pay_data.append([P("<b>TOTAL PAYMENT -</b>", size=8),
-                     P(f"{total_paid:,.0f} /-", size=8, align=TA_RIGHT)])
+                     P(f"₹ {total_paid:,.0f} /-", size=8, bold=True,
+                       align=TA_RIGHT, fontName=_HINDI_FONT_BOLD)])
 
     pay_inner = Table(pay_data, colWidths=[LW * 0.58, LW * 0.42])
     pay_inner.setStyle(TableStyle([
@@ -614,6 +630,7 @@ def _generate_pdf(invoice: dict, path: str):
         ('BOTTOMPADDING', (0, 0), (-1, -1), 2),
         ('LEFTPADDING',   (0, 0), (-1, -1), 0),
         ('RIGHTPADDING',  (0, 0), (-1, -1), 0),
+        ('RIGHTPADDING',  (1, 1), (1,  -1), 6),   # right margin on amount column
         ('ALIGN',         (1, 1), (1,  -1), 'RIGHT'),
     ]))
 
@@ -859,6 +876,14 @@ def _build_html_preview(invoice: dict) -> str:
     sgst_amt = round(subtotal * sgst_pct / 100, 2)
     grand    = float(invoice.get("grand_total", subtotal + cgst_amt + sgst_amt))
     round_off = round(grand - (subtotal + cgst_amt + sgst_amt), 2)
+    _cash_h  = float(invoice.get("cash_paid",    0))
+    _upi_h   = float(invoice.get("upi_paid",     0))
+    _card_h  = float(invoice.get("card_paid",    0))
+    _chq_h   = float(invoice.get("cheque_paid",  0))
+    _op_h    = float(invoice.get("old_purchase", 0))
+    _adv_h   = float(invoice.get("advance_paid", 0))
+    _tp_h    = _cash_h + _upi_h + _card_h + _chq_h + _op_h + _adv_h
+    total_paid_html = _tp_h if _tp_h > 0 else grand
 
     # Build purity → metal-name lookup
     try:
@@ -905,7 +930,7 @@ def _build_html_preview(invoice: dict) -> str:
                 f"<td>{it.get('hsn_code','7113')}</td>"
                 f"<td>{it.get('purity','')}</td>"
                 f"<td>{it.get('quantity','')}</td>"
-                f"<td>{gw:.3f}</td><td>{lw:.3f}</td><td>{nw:.3f}</td>"
+                f"<td>{gw:.2f}</td><td>{lw:.2f}</td><td>{nw:.2f}</td>"
                 f"<td>{float(it.get('rate',0)):.0f}</td>"
                 f"<td>{mk_s}</td>"
                 f"<td><b>{float(it.get('total',0)):,.2f}</b></td>"
@@ -916,9 +941,9 @@ def _build_html_preview(invoice: dict) -> str:
             f"<tr style='background:#e4e4e4;font-weight:bold;'>"
             f"<td colspan='7' style='text-align:left;padding-left:8px;'>"
             f"{metal_name} Total</td>"
-            f"<td>{gw_grp:.3f}</td>"
+            f"<td>{gw_grp:.2f}</td>"
             f"<td></td>"
-            f"<td>{nw_grp:.3f}</td>"
+            f"<td>{nw_grp:.2f}</td>"
             f"<td></td><td></td>"
             f"<td>{amt_grp:,.2f}</td>"
             f"</tr>"
@@ -1009,9 +1034,9 @@ def _build_html_preview(invoice: dict) -> str:
   </div>
   <table>
     <thead><tr>
-      <th>S.No</th><th>Tag/RFID</th><th style="text-align:left">PARTICULARS/ITEM</th>
-      <th>HUID/Remarks</th><th>HSN</th><th>Purity</th><th>Qty</th>
-      <th>Gross Wt</th><th>Less Wt</th><th>Nett Wt</th>
+      <th>S.No</th><th>Tag/Rfid</th><th style="text-align:left">Item Name</th>
+      <th>Huid/Remarks</th><th>Hsn</th><th>Purity</th><th>Pcs</th>
+      <th>Gross Wt</th><th>Less</th><th>Nett Wt</th>
       <th>Rate</th><th>Mk/Chrg</th><th>Amount</th>
     </tr></thead>
     <tbody>{rows_html}</tbody>
@@ -1020,8 +1045,14 @@ def _build_html_preview(invoice: dict) -> str:
     <div class="left-bot">
       <div class="pay-box">
         <div><u><b>Payment Detail :</b></u></div>
+        {f'<div style="display:flex;justify-content:space-between"><b>Cash</b><span style="padding-right:6px">&#x20B9; {_cash_h:,.0f} /-</span></div>' if _cash_h > 0 else ""}
+        {f'<div style="display:flex;justify-content:space-between"><b>UPI</b><span style="padding-right:6px">&#x20B9; {_upi_h:,.0f} /-</span></div>' if _upi_h > 0 else ""}
+        {f'<div style="display:flex;justify-content:space-between"><b>Card</b><span style="padding-right:6px">&#x20B9; {_card_h:,.0f} /-</span></div>' if _card_h > 0 else ""}
+        {f'<div style="display:flex;justify-content:space-between"><b>Cheque</b><span style="padding-right:6px">&#x20B9; {_chq_h:,.0f} /-</span></div>' if _chq_h > 0 else ""}
+        {f'<div style="display:flex;justify-content:space-between"><b>Old Purchase (-)</b><span style="padding-right:6px">&#x20B9; {_op_h:,.0f} /-</span></div>' if _op_h > 0 else ""}
+        {f'<div style="display:flex;justify-content:space-between"><b>Advance (-)</b><span style="padding-right:6px">&#x20B9; {_adv_h:,.0f} /-</span></div>' if _adv_h > 0 else ""}
         <div style="display:flex;justify-content:space-between">
-          <b>TOTAL PAYMENT -</b><span>{grand:,.0f} /-</span>
+          <b>TOTAL PAYMENT -</b><span style="padding-right:6px"><b>&#x20B9; {total_paid_html:,.0f} /-</b></span>
         </div>
       </div>
       <div class="words-box">
