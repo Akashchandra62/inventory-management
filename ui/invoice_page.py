@@ -19,7 +19,7 @@ from services.customer_service import get_all_customers
 from services.item_catalog_service import (
     get_item_by_code, get_item_by_name, get_names as get_catalog_names, add_catalog_item
 )
-from services.metal_service import get_metals, add_metal as _add_metal_rec
+from services.metal_service import get_metals, get_metal_by_id, add_metal as _add_metal_rec
 
 
 PURITY_OPTIONS = ["22Kt", "18Kt", "14Kt", "92.5", "99.9", "60-70", "Other"]
@@ -689,11 +689,22 @@ class InvoicePage(QWidget):
             mk_v = rd['mk_spn'].value()
             mk_a = round(nwt * rate * mk_v / 100, 2) if rd['mk_is_pct'][0] else mk_v
             other = rd['other'].value()
+
+            _cat_item   = get_item_by_name(name)
+            _metal_id   = _cat_item.get('metal_id', '') if _cat_item else ''
+            _category   = _cat_item.get('category', '') if _cat_item else ''
+            _metal_name = ''
+            if _metal_id:
+                _m = get_metal_by_id(_metal_id)
+                _metal_name = _m.get('name', '') if _m else ''
+
             self._items.append({
                 'tag':           rd['tag'].text().strip(),
                 'name':          name,
                 'huid':          rd['huid'].text().strip(),
-                'category':      '',
+                'category':      _category,
+                'metal':         _metal_name,
+                'metal_id':      _metal_id,
                 'hsn_code':      '7113',
                 'purity':        rd['purity'].currentText(),
                 'quantity':      rd['qty'].value(),

@@ -6,42 +6,97 @@ from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QTableWidget, QTableWidgetItem,
     QLineEdit, QDateEdit, QGroupBox, QFrame,
-    QHeaderView, QAbstractItemView, QMessageBox, QScrollArea
+    QHeaderView, QAbstractItemView, QMessageBox,
+    QScrollArea, QComboBox,
 )
 from PyQt5.QtCore import Qt, QDate
-from PyQt5.QtGui import QFont
-from services.invoice_service import filter_invoices, get_all_invoices
+from PyQt5.QtGui import QFont, QColor
+from services.invoice_service import get_all_invoices
+from services.metal_service import get_metals
+from services.item_catalog_service import get_catalog
 from app.utils import format_currency
 from app.printer_helper import save_invoice_as_pdf
+from app.config import AppConfig
 import csv, os
-from datetime import date
+from datetime import date, timedelta
 
 
 _RPT_LABELS = [
-    "Invoice No", "Date", "Time",
-    "Customer", "Mobile", "Subtotal", "Tax", "Grand Total", "Action"
+    "Invoice No", "Date", "Customer",
+    "Gross Sale (₹)", "Discount (₹)", "Sale Amt (₹)",
+    "CGST (₹)", "SGST (₹)", "Other Purch (₹)",
+    "Advance (₹)", "Cash (₹)", "Card (₹)",
+    "Cheque (₹)", "Dues (₹)",
 ]
-_RPT_HEADERS = [
-    "Invoice No ▲▼", "Date ▲▼", "Time ▲▼",
-    "Customer ▲▼", "Mobile ▲▼", "Subtotal ▲▼", "Tax ▲▼", "Grand Total ▲▼", "Action"
-]
-# col index → invoice dict key (for sorting)
-_RPT_SORT_KEYS = {
-    0: "invoice_number", 1: "date", 2: "time",
-    3: "customer_name",  4: "customer_mobile",
-    5: "subtotal",       6: "tax_amount", 7: "grand_total",
+_NON_SORTABLE: set = set()
+_SORT_KEYS = {
+    0: "invoice_number", 1: "date",        2: "customer_name",
+    3: "gross_sale",     4: "discount",     5: "sale_amount",
+    6: "cgst",           7: "sgst",         8: "other_purchase",
+    9: "advance",        10: "cash",        11: "card",
+    12: "cheque",        13: "dues",
 }
+
+
+def _due_amount(inv: dict) -> float:
+    return float(inv.get("due_amount", 0) or 0)
+
+
+def _card_style(bg: str) -> str:
+    return f"QFrame {{ background: {bg}; border-radius: 8px; border: none; }}"
+
+
+def _build_inv_row(inv: dict, catalog_metal_map: dict) -> dict:
+    """Build one summary row per invoice."""
+    items = inv.get("items", [])
+    metals     = {it.get("metal", "").strip().lower() for it in items}
+    purities   = {it.get("purity", "").strip().lower() for it in items}
+    categories = {it.get("category", "").strip() for it in items}
+    # fill metal from catalog if blank
+    metals |= {
+        catalog_metal_map.get(it.get("name", "").strip().lower(), "").lower()
+        for it in items
+    }
+    metals.discard("")
+
+    return {
+        "_inv":            inv,
+        "invoice_number":  inv.get("invoice_number", ""),
+        "date":            inv.get("date", ""),
+        "customer_name":   inv.get("customer_name", ""),
+        "gross_sale":      float(inv.get("subtotal",      0) or 0),
+        "discount":        float(inv.get("round_off",     0) or 0),
+        "sale_amount":     float(inv.get("grand_total",   0) or 0),
+        "cgst":            float(inv.get("cgst_amount",   0) or 0),
+        "sgst":            float(inv.get("sgst_amount",   0) or 0),
+        "other_purchase":  float(inv.get("old_purchase",  0) or 0),
+        "advance":         float(inv.get("advance_paid",  0) or 0),
+        "cash":            float(inv.get("cash_paid",     0) or 0),
+        "card":            float(inv.get("card_paid",     0) or 0),
+        "cheque":          float(inv.get("cheque_paid",   0) or 0),
+        "dues":            float(inv.get("due_amount",    0) or 0),
+        # filter helpers
+        "_metals":     metals,
+        "_purities":   purities,
+        "_categories": categories,
+    }
 
 
 class SalesReportPage(QWidget):
     def __init__(self, history_mode: bool = False):
         super().__init__()
-        self.history_mode = history_mode
-        self._sort_col = -1   # -1 = no sort
-        self._sort_asc = True
-        self._data_base: list[dict] = []   # unsorted current data
+        self.history_mode           = history_mode
+        self._sort_col              = -1
+        self._sort_asc              = True
+        self._all_invoices: list    = []
+        self._flat_rows: list       = []
+        self._unsorted_flat: list   = []
+        self._catalog_metal_map: dict = {}
         self._build_ui()
 
+    # ─────────────────────────────────────────────────────────
+    #  BUILD UI
+    # ─────────────────────────────────────────────────────────
     def _build_ui(self):
         scroll = QScrollArea(self)
         scroll.setWidgetResizable(True)
@@ -56,68 +111,184 @@ class SalesReportPage(QWidget):
         root.setContentsMargins(25, 20, 25, 20)
         root.setSpacing(14)
 
+        # Title
         page_title = "📋  Invoice History" if self.history_mode else "📊  Sales Report"
         title = QLabel(page_title)
         title.setFont(QFont("Segoe UI", 16, QFont.Bold))
         root.addWidget(title)
 
+        # ── Quick date presets ────────────────────────────────
+        preset_row = QHBoxLayout()
+        preset_row.setSpacing(6)
+        preset_row.addWidget(QLabel("Quick:"))
+        _ps = (
+            "QPushButton{background:#ecf0f1;color:#2c3e50;border:1px solid #bdc3c7;"
+            "border-radius:4px;padding:4px 10px;font-size:11px;}"
+            "QPushButton:hover{background:#d5d8dc;}"
+        )
+        for lbl, slot in [
+            ("Today",      self._preset_today),
+            ("This Week",  self._preset_week),
+            ("This Month", self._preset_month),
+            ("Last Month", self._preset_last_month),
+            ("This Year",  self._preset_year),
+            ("All Time",   self._preset_all),
+        ]:
+            b = QPushButton(lbl); b.setStyleSheet(_ps); b.clicked.connect(slot)
+            preset_row.addWidget(b)
+        preset_row.addStretch()
+        root.addLayout(preset_row)
+
         # ── Filters ───────────────────────────────────────────
-        filter_grp = QGroupBox("Filter")
-        fl = QHBoxLayout(filter_grp)
+        filter_grp = QGroupBox("Filters")
+        filter_grp.setStyleSheet("QGroupBox{font-weight:bold;}")
+        fl = QVBoxLayout(filter_grp)
         fl.setSpacing(10)
 
-        fl.addWidget(QLabel("From:"))
+        # Row 1 — dates, customer, invoice no
+        row1 = QHBoxLayout(); row1.setSpacing(10)
+        row1.addWidget(QLabel("From:"))
         self.dt_from = QDateEdit(QDate.currentDate().addMonths(-1))
         self.dt_from.setCalendarPopup(True); self.dt_from.setMinimumHeight(32)
-        fl.addWidget(self.dt_from)
+        self.dt_from.dateChanged.connect(self._do_search)
+        row1.addWidget(self.dt_from)
 
-        fl.addWidget(QLabel("To:"))
+        row1.addWidget(QLabel("To:"))
         self.dt_to = QDateEdit(QDate.currentDate())
         self.dt_to.setCalendarPopup(True); self.dt_to.setMinimumHeight(32)
-        fl.addWidget(self.dt_to)
+        self.dt_to.dateChanged.connect(self._do_search)
+        row1.addWidget(self.dt_to)
 
-        fl.addWidget(QLabel("Customer:"))
+        row1.addWidget(QLabel("Customer:"))
         self.txt_cust = QLineEdit()
-        self.txt_cust.setPlaceholderText("Name search")
-        self.txt_cust.setMinimumHeight(32)
-        self.txt_cust.setMaximumWidth(180)
-        self.txt_cust.textChanged.connect(self._on_search_text_changed)
-        fl.addWidget(self.txt_cust)
+        self.txt_cust.setPlaceholderText("Name or mobile")
+        self.txt_cust.setMinimumHeight(32); self.txt_cust.setMaximumWidth(170)
+        self.txt_cust.textChanged.connect(self._on_text_changed)
+        row1.addWidget(self.txt_cust)
 
-        fl.addWidget(QLabel("Invoice No:"))
+        row1.addWidget(QLabel("Invoice No:"))
         self.txt_inv = QLineEdit()
         self.txt_inv.setPlaceholderText("e.g. JB-0001")
-        self.txt_inv.setMinimumHeight(32)
-        self.txt_inv.setMaximumWidth(140)
-        self.txt_inv.textChanged.connect(self._on_search_text_changed)
-        fl.addWidget(self.txt_inv)
+        self.txt_inv.setMinimumHeight(32); self.txt_inv.setMaximumWidth(130)
+        self.txt_inv.textChanged.connect(self._on_text_changed)
+        row1.addWidget(self.txt_inv)
 
-        btn_search = QPushButton("🔍  Search")
+        btn_search = QPushButton("Search")
         btn_search.setStyleSheet(
-            "QPushButton { background:#2980b9; color:white; border-radius:4px; padding:6px 14px; }"
-            "QPushButton:hover { background:#2471a3; }"
-        )
-        btn_search.clicked.connect(self._do_search)
-        fl.addWidget(btn_search)
+            "QPushButton{background:#2980b9;color:white;border-radius:4px;padding:6px 14px;}"
+            "QPushButton:hover{background:#2471a3;}")
+        btn_search.setMinimumHeight(32); btn_search.clicked.connect(self._do_search)
+        row1.addWidget(btn_search)
 
-        btn_all = QPushButton("Show All")
-        btn_all.setStyleSheet(
-            "QPushButton { background:#7f8c8d; color:white; border-radius:4px; padding:6px 14px; }"
-        )
-        btn_all.clicked.connect(self._show_all)
-        fl.addWidget(btn_all)
+        btn_reset = QPushButton("Reset")
+        btn_reset.setStyleSheet(
+            "QPushButton{background:#7f8c8d;color:white;border-radius:4px;padding:6px 14px;}"
+            "QPushButton:hover{background:#626567;}")
+        btn_reset.setMinimumHeight(32); btn_reset.clicked.connect(self._reset_filters)
+        row1.addWidget(btn_reset)
+        row1.addStretch()
+        fl.addLayout(row1)
 
-        fl.addStretch()
+        # Row 2 — category, metal, purity, due, min/max
+        row2 = QHBoxLayout(); row2.setSpacing(10)
+
+        def _cmb(items, min_w):
+            c = QComboBox()
+            c.addItems(items); c.setMinimumHeight(32); c.setMinimumWidth(min_w)
+            c.currentIndexChanged.connect(self._do_search)
+            return c
+
+        row2.addWidget(QLabel("Category:"))
+        self.cmb_category = _cmb(["All"], 120)
+        row2.addWidget(self.cmb_category)
+
+        row2.addWidget(QLabel("Metal:"))
+        self.cmb_metal = _cmb(["All"], 100)
+        row2.addWidget(self.cmb_metal)
+
+        row2.addWidget(QLabel("Purity:"))
+        self.cmb_purity = _cmb(["All"], 100)
+        row2.addWidget(self.cmb_purity)
+
+        row2.addWidget(QLabel("Due:"))
+        self.cmb_due = _cmb(["All", "Paid (No Due)", "Has Due"], 120)
+        row2.addWidget(self.cmb_due)
+
+        row2.addWidget(QLabel("Min ₹:"))
+        self.txt_min = QLineEdit()
+        self.txt_min.setPlaceholderText("0")
+        self.txt_min.setMinimumHeight(32); self.txt_min.setMaximumWidth(88)
+        self.txt_min.textChanged.connect(self._on_text_changed)
+        row2.addWidget(self.txt_min)
+
+        row2.addWidget(QLabel("Max ₹:"))
+        self.txt_max = QLineEdit()
+        self.txt_max.setPlaceholderText("Any")
+        self.txt_max.setMinimumHeight(32); self.txt_max.setMaximumWidth(88)
+        self.txt_max.textChanged.connect(self._on_text_changed)
+        row2.addWidget(self.txt_max)
+
+        row2.addStretch()
+        fl.addLayout(row2)
         root.addWidget(filter_grp)
+
+        # ── Summary Cards ─────────────────────────────────────
+        cards_row = QHBoxLayout(); cards_row.setSpacing(10)
+        for card_title, default_val, color, attr in [
+            ("Invoices",      "0",       "#2980b9", "lbl_count"),
+            ("Gross Sale",    "₹ 0.00",  "#27ae60", "lbl_gross"),
+            ("CGST + SGST",   "₹ 0.00",  "#f39c12", "lbl_gst"),
+            ("Sale Amount",   "₹ 0.00",  "#8e44ad", "lbl_sale"),
+            ("Total Dues",    "₹ 0.00",  "#e74c3c", "lbl_dues"),
+        ]:
+            frame = QFrame()
+            frame.setFixedHeight(72)
+            frame.setStyleSheet(_card_style(color))
+            cl = QVBoxLayout(frame)
+            cl.setContentsMargins(14, 8, 14, 8); cl.setSpacing(2)
+            lt = QLabel(card_title)
+            lt.setStyleSheet("color:rgba(255,255,255,0.85);font-size:11px;background:transparent;")
+            lv = QLabel(default_val)
+            lv.setFont(QFont("Segoe UI", 13, QFont.Bold))
+            lv.setStyleSheet("color:white;background:transparent;")
+            cl.addWidget(lt); cl.addWidget(lv)
+            setattr(self, attr, lv)
+            cards_row.addWidget(frame)
+        root.addLayout(cards_row)
+
+        # ── Payment breakdown bar ─────────────────────────────
+        breakdown = QFrame()
+        breakdown.setStyleSheet(
+            "QFrame{background:#f8f9fa;border:1px solid #e0e0e0;border-radius:6px;}")
+        bl = QHBoxLayout(breakdown)
+        bl.setContentsMargins(14, 8, 14, 8); bl.setSpacing(16)
+        hdr_lbl = QLabel("Payment Breakdown:")
+        hdr_lbl.setFont(QFont("Segoe UI", 10, QFont.Bold))
+        hdr_lbl.setStyleSheet("color:#2c3e50;background:transparent;")
+        bl.addWidget(hdr_lbl)
+        for mode, color, attr in [
+            ("Cash",   "#27ae60", "lbl_cash"),
+            ("Card",   "#2980b9", "lbl_card"),
+            ("UPI",    "#8e44ad", "lbl_upi"),
+            ("Cheque", "#f39c12", "lbl_cheque"),
+        ]:
+            pill = QLabel(f"{mode}: ₹ 0.00")
+            pill.setStyleSheet(
+                f"background:{color};color:white;border-radius:12px;"
+                f"padding:3px 14px;font-size:11px;font-weight:bold;")
+            setattr(self, attr, pill); bl.addWidget(pill)
+        bl.addStretch()
+        root.addWidget(breakdown)
 
         # ── Table ─────────────────────────────────────────────
         self.tbl = QTableWidget()
-        self.tbl.setColumnCount(9)
-        self.tbl.setHorizontalHeaderLabels(_RPT_HEADERS)
+        self.tbl.setColumnCount(len(_RPT_LABELS))
+        self.tbl.setHorizontalHeaderLabels(_RPT_LABELS)
         self.tbl.horizontalHeader().sectionClicked.connect(self._on_header_click)
         self.tbl.horizontalHeader().setCursor(Qt.PointingHandCursor)
-        self.tbl.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
-        self.tbl.verticalHeader().setDefaultSectionSize(42)
+        hdr = self.tbl.horizontalHeader()
+        hdr.setSectionResizeMode(QHeaderView.Stretch)
+        self.tbl.verticalHeader().setDefaultSectionSize(38)
         self.tbl.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.tbl.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.tbl.setAlternatingRowColors(True)
@@ -125,168 +296,273 @@ class SalesReportPage(QWidget):
         self.tbl.doubleClicked.connect(self._view_invoice)
         root.addWidget(self.tbl)
 
-        # ── Summary Row ───────────────────────────────────────
-        summary = QFrame()
-        summary.setStyleSheet("QFrame { background:white; border:1px solid #e0e0e0; border-radius:5px; padding:6px; }")
-        sl = QHBoxLayout(summary)
-        self.lbl_count  = QLabel("Invoices: 0")
-        self.lbl_total  = QLabel("Total Sales: ₹ 0.00")
-        self.lbl_tax    = QLabel("Total Tax: ₹ 0.00")
-        for lbl in (self.lbl_count, self.lbl_total, self.lbl_tax):
-            lbl.setFont(QFont("Segoe UI", 12, QFont.Bold))
-            lbl.setStyleSheet("color: #2c3e50; background: transparent;")
-        sl.addWidget(self.lbl_count)
-        sl.addStretch()
-        sl.addWidget(self.lbl_total)
-        sl.addSpacing(30)
-        sl.addWidget(self.lbl_tax)
-        root.addWidget(summary)
-
         # ── Action buttons ────────────────────────────────────
-        act = QHBoxLayout()
-        act.addStretch()
-        btn_print = QPushButton("🖨  Print Invoice")
-        btn_print.setStyleSheet("QPushButton { background:#f39c12; color:white; border-radius:4px; padding:8px 16px; }"
-                                "QPushButton:hover { background:#e67e22; }")
-        btn_print.clicked.connect(self._reprint)
-        act.addWidget(btn_print)
-
-        btn_export = QPushButton("📤  Export CSV")
-        btn_export.setStyleSheet("QPushButton { background:#27ae60; color:white; border-radius:4px; padding:8px 16px; }"
-                                 "QPushButton:hover { background:#229954; }")
-        btn_export.clicked.connect(self._export_csv)
-        act.addWidget(btn_export)
+        act = QHBoxLayout(); act.addStretch()
+        for label, color, hover, slot in [
+            ("Print / PDF",  "#f39c12", "#e67e22", self._reprint),
+            ("Export Excel", "#1e8449", "#196f3d", self._export_excel),
+            ("Export CSV",   "#2980b9", "#2471a3", self._export_csv),
+        ]:
+            b = QPushButton(label)
+            b.setStyleSheet(
+                f"QPushButton{{background:{color};color:white;border-radius:4px;padding:8px 16px;}}"
+                f"QPushButton:hover{{background:{hover};}}")
+            b.clicked.connect(slot); act.addWidget(b)
         root.addLayout(act)
 
-        self._data: list[dict] = []
+    # ─────────────────────────────────────────────────────────
+    #  Quick date presets
+    # ─────────────────────────────────────────────────────────
+    def _set_range(self, d_from: date, d_to: date):
+        for w in (self.dt_from, self.dt_to): w.blockSignals(True)
+        self.dt_from.setDate(QDate(d_from.year, d_from.month, d_from.day))
+        self.dt_to.setDate(QDate(d_to.year, d_to.month, d_to.day))
+        for w in (self.dt_from, self.dt_to): w.blockSignals(False)
+        self._do_search()
 
+    def _preset_today(self):
+        t = date.today(); self._set_range(t, t)
+    def _preset_week(self):
+        t = date.today(); self._set_range(t - timedelta(days=t.weekday()), t)
+    def _preset_month(self):
+        t = date.today(); self._set_range(t.replace(day=1), t)
+    def _preset_last_month(self):
+        t = date.today(); end = t.replace(day=1) - timedelta(days=1)
+        self._set_range(end.replace(day=1), end)
+    def _preset_year(self):
+        t = date.today(); self._set_range(t.replace(month=1, day=1), t)
+    def _preset_all(self):
+        for w in (self.dt_from, self.dt_to): w.blockSignals(True)
+        self.dt_from.setDate(QDate(2000, 1, 1))
+        self.dt_to.setDate(QDate.currentDate())
+        for w in (self.dt_from, self.dt_to): w.blockSignals(False)
+        self._do_search()
+
+    # ─────────────────────────────────────────────────────────
+    #  Refresh / dropdown loaders
+    # ─────────────────────────────────────────────────────────
     def refresh(self):
-        self._show_all()
-
-    def _show_all(self):
         self._all_invoices = get_all_invoices()
-        self._data_base = self._all_invoices
-        self._data = self._apply_sort(self._data_base)
-        self._populate(self._data)
+        self._refresh_metals()
+        self._refresh_categories()
+        self._refresh_purities()
+        self._do_search()
 
-    def _on_search_text_changed(self, text):
+    def _refresh_metals(self):
+        metals = get_metals()
+        metal_id_map = {m['id']: m['name'] for m in metals if m.get('id')}
+        self._catalog_metal_map = {}
+        for ci in get_catalog():
+            mid = ci.get('metal_id', '')
+            if mid and mid in metal_id_map:
+                self._catalog_metal_map[ci['name'].strip().lower()] = metal_id_map[mid]
+        names = sorted({m['name'].strip() for m in metals if m.get('name')})
+        self._reload_cmb(self.cmb_metal, names)
+
+    def _refresh_categories(self):
+        cats = set()
+        for inv in self._all_invoices:
+            for it in inv.get("items", []):
+                c = it.get("category", "").strip()
+                if c: cats.add(c)
+        self._reload_cmb(self.cmb_category, sorted(cats))
+
+    def _refresh_purities(self):
+        purities = set()
+        for inv in self._all_invoices:
+            for it in inv.get("items", []):
+                p = it.get("purity", "").strip()
+                if p: purities.add(p)
+        self._reload_cmb(self.cmb_purity, sorted(purities))
+
+    def _reload_cmb(self, cmb: QComboBox, options: list):
+        current = cmb.currentText()
+        cmb.blockSignals(True)
+        cmb.clear(); cmb.addItem("All")
+        for o in options: cmb.addItem(o)
+        idx = cmb.findText(current)
+        cmb.setCurrentIndex(max(0, idx))
+        cmb.blockSignals(False)
+
+    def _reset_filters(self):
+        for w in (self.dt_from, self.dt_to, self.cmb_category,
+                  self.cmb_metal, self.cmb_purity, self.cmb_due):
+            w.blockSignals(True)
+        self.dt_from.setDate(QDate.currentDate().addMonths(-1))
+        self.dt_to.setDate(QDate.currentDate())
+        self.txt_cust.clear(); self.txt_inv.clear()
+        self.txt_min.clear();  self.txt_max.clear()
+        for c in (self.cmb_category, self.cmb_metal, self.cmb_purity, self.cmb_due):
+            c.setCurrentIndex(0)
+        for w in (self.dt_from, self.dt_to, self.cmb_category,
+                  self.cmb_metal, self.cmb_purity, self.cmb_due):
+            w.blockSignals(False)
+        self._do_search()
+
+    def _on_text_changed(self, text: str):
         if len(text.strip()) >= 3 or len(text.strip()) == 0:
             self._do_search()
 
+    # ─────────────────────────────────────────────────────────
+    #  Filter + build rows
+    # ─────────────────────────────────────────────────────────
     def _do_search(self):
-        cust_term = self.txt_cust.text().strip().lower()
-        inv_term = self.txt_inv.text().strip().lower()
-        d_from = self.dt_from.date().toString("yyyy-MM-dd")
-        d_to = self.dt_to.date().toString("yyyy-MM-dd")
-        
-        filtered = []
-        for inv in self._all_invoices:
-            inv_dt = inv.get("date", "")
-            if not (d_from <= inv_dt <= d_to): continue
-            
-            if cust_term and cust_term not in inv.get('customer_name', '').lower() and cust_term not in inv.get('customer_mobile', ''):
-                continue
-            if inv_term and inv_term not in inv.get('invoice_number', '').lower():
-                continue
-                
-            filtered.append(inv)
-            
-        self._data_base = filtered
-        self._data = self._apply_sort(self._data_base)
-        self._populate(self._data)
+        d_from        = self.dt_from.date().toString("yyyy-MM-dd")
+        d_to          = self.dt_to.date().toString("yyyy-MM-dd")
+        cust_term     = self.txt_cust.text().strip().lower()
+        inv_term      = self.txt_inv.text().strip().lower()
+        cat_filter    = self.cmb_category.currentText()
+        metal_filter  = self.cmb_metal.currentText().lower()
+        purity_filter = self.cmb_purity.currentText().lower()
+        due_filter    = self.cmb_due.currentText()
 
-    # ── Column sort ───────────────────────────────────────────
+        try:    min_amt = float(self.txt_min.text()) if self.txt_min.text().strip() else None
+        except: min_amt = None
+        try:    max_amt = float(self.txt_max.text()) if self.txt_max.text().strip() else None
+        except: max_amt = None
+
+        rows = []
+        for inv in self._all_invoices:
+            if not (d_from <= inv.get("date", "") <= d_to):
+                continue
+            if cust_term and (
+                cust_term not in inv.get("customer_name", "").lower() and
+                cust_term not in inv.get("customer_mobile", "")
+            ):
+                continue
+            if inv_term and inv_term not in inv.get("invoice_number", "").lower():
+                continue
+
+            gt = float(inv.get("grand_total", 0) or 0)
+            if min_amt is not None and gt < min_amt: continue
+            if max_amt is not None and gt > max_amt: continue
+
+            due = _due_amount(inv)
+            if due_filter == "Paid (No Due)" and due > 0: continue
+            if due_filter == "Has Due"        and due <= 0: continue
+
+            row = _build_inv_row(inv, self._catalog_metal_map)
+
+            if cat_filter != "All" and cat_filter not in row["_categories"]:
+                continue
+            if metal_filter != "all" and metal_filter not in row["_metals"]:
+                continue
+            if purity_filter != "all" and purity_filter not in row["_purities"]:
+                continue
+
+            rows.append(row)
+
+        self._unsorted_flat = rows
+        self._flat_rows     = self._apply_sort(rows)
+        self._populate(self._flat_rows)
+
+    # ─────────────────────────────────────────────────────────
+    #  Sort
+    # ─────────────────────────────────────────────────────────
     def _on_header_click(self, col: int):
-        if col == 8:   # Action column — not sortable
-            return
+        if col in _NON_SORTABLE: return
         if self._sort_col == col:
-            if not self._sort_asc:
-                self._sort_asc = True                  # desc → asc
-            else:
-                self._sort_col = -1                    # asc → remove
+            if self._sort_asc:
+                self._sort_col = -1
                 self._refresh_sort_headers()
-                self._data = list(self._data_base)
-                self._populate(self._data)
+                self._flat_rows = list(self._unsorted_flat)
+                self._populate(self._flat_rows)
                 return
+            self._sort_asc = True
         else:
             self._sort_col = col
-            self._sort_asc = False                     # first click → descending
-
+            self._sort_asc = False
         self._refresh_sort_headers()
-        self._data = self._apply_sort(self._data_base)
-        self._populate(self._data)
+        self._flat_rows = self._apply_sort(self._unsorted_flat)
+        self._populate(self._flat_rows)
 
-    def _apply_sort(self, data: list) -> list:
-        if self._sort_col < 0 or self._sort_col not in _RPT_SORT_KEYS:
-            return list(data)
-        key = _RPT_SORT_KEYS[self._sort_col]
-        def _k(inv):
-            v = inv.get(key, "")
+    def _apply_sort(self, rows: list) -> list:
+        if self._sort_col < 0 or self._sort_col not in _SORT_KEYS:
+            return list(rows)
+        key = _SORT_KEYS[self._sort_col]
+        def _k(r):
+            v = r.get(key, "")
             try:    return (0, float(v))
             except: return (1, str(v).lower())
-        return sorted(data, key=_k, reverse=not self._sort_asc)
+        return sorted(rows, key=_k, reverse=not self._sort_asc)
 
     def _refresh_sort_headers(self):
         for i, lbl in enumerate(_RPT_LABELS):
             item = self.tbl.horizontalHeaderItem(i)
-            if item:
-                if i == self._sort_col:
-                    item.setText(lbl + (" ▲" if self._sort_asc else " ▼"))
-                elif i == 8:
-                    item.setText(lbl)       # Action column — no sort indicator
-                else:
-                    item.setText(lbl + " ▲▼")
+            if not item: continue
+            if i == self._sort_col:
+                item.setText(lbl + (" ▲" if self._sort_asc else " ▼"))
+            else:
+                item.setText(lbl)
 
-    def _populate(self, invoices: list):
+    # ─────────────────────────────────────────────────────────
+    #  Populate table
+    # ─────────────────────────────────────────────────────────
+    def _populate(self, rows: list):
         self.tbl.setRowCount(0)
-        total_sales = total_tax = 0.0
-        for inv in invoices:
+        t_gross = t_disc = t_sale = t_cgst = t_sgst = 0.0
+        t_other = t_adv  = t_cash = t_card = 0.0
+        t_cheque = t_dues = t_upi = 0.0
+
+        for row in rows:
             r = self.tbl.rowCount()
             self.tbl.insertRow(r)
+            inv = row["_inv"]
+
             vals = [
-                inv.get("invoice_number", ""),
-                inv.get("date", ""),
-                inv.get("time", ""),
-                inv.get("customer_name", ""),
-                inv.get("customer_mobile", ""),
-                format_currency(inv.get("subtotal", 0)),
-                format_currency(inv.get("tax_amount", 0)),
-                format_currency(inv.get("grand_total", 0)),
+                row["invoice_number"],
+                row["date"],
+                row["customer_name"],
+                f"{row['gross_sale']:,.2f}",
+                f"{row['discount']:,.2f}",
+                f"{row['sale_amount']:,.2f}",
+                f"{row['cgst']:,.2f}",
+                f"{row['sgst']:,.2f}",
+                f"{row['other_purchase']:,.2f}",
+                f"{row['advance']:,.2f}",
+                f"{row['cash']:,.2f}",
+                f"{row['card']:,.2f}",
+                f"{row['cheque']:,.2f}",
+                f"{row['dues']:,.2f}",
             ]
+            _right = set(range(3, 14))
             for c, v in enumerate(vals):
                 cell = QTableWidgetItem(v)
-                cell.setTextAlignment(Qt.AlignCenter)
+                cell.setTextAlignment(
+                    Qt.AlignRight | Qt.AlignVCenter if c in _right
+                    else Qt.AlignCenter
+                )
+                if c == 13 and row["dues"] > 0:
+                    cell.setForeground(QColor("#e74c3c"))
                 self.tbl.setItem(r, c, cell)
 
-            # Action buttons: View + Download
-            btn_view = QPushButton("View")
-            btn_view.setStyleSheet(
-                "background:#2980b9;color:white;padding:4px 8px;"
-                "border-radius:3px;font-weight:bold;font-size:11px;border:none;")
-            btn_view.clicked.connect(lambda checked, i=inv: self._open_detail(i))
+            t_gross  += row["gross_sale"]
+            t_disc   += row["discount"]
+            t_sale   += row["sale_amount"]
+            t_cgst   += row["cgst"]
+            t_sgst   += row["sgst"]
+            t_other  += row["other_purchase"]
+            t_adv    += row["advance"]
+            t_cash   += row["cash"]
+            t_card   += row["card"]
+            t_cheque += row["cheque"]
+            t_dues   += row["dues"]
+            t_upi    += float(inv.get("upi_paid", 0) or 0)
 
-            btn_dl = QPushButton("PDF")
-            btn_dl.setStyleSheet(
-                "background:#27ae60;color:white;padding:4px 8px;"
-                "border-radius:3px;font-weight:bold;font-size:11px;border:none;")
-            btn_dl.clicked.connect(lambda checked, i=inv: save_invoice_as_pdf(i, parent=self))
+        self.lbl_count.setText(str(len(rows)))
+        self.lbl_gross.setText(format_currency(t_gross))
+        self.lbl_gst.setText(format_currency(t_cgst + t_sgst))
+        self.lbl_sale.setText(format_currency(t_sale))
+        self.lbl_dues.setText(format_currency(t_dues))
 
-            btn_container = QWidget()
-            btn_layout = QHBoxLayout(btn_container)
-            btn_layout.setContentsMargins(2, 2, 2, 2)
-            btn_layout.setSpacing(4)
-            btn_layout.setAlignment(Qt.AlignCenter)
-            btn_layout.addWidget(btn_view)
-            btn_layout.addWidget(btn_dl)
-            self.tbl.setCellWidget(r, 8, btn_container)
+        self.lbl_cash.setText(f"Cash: {format_currency(t_cash)}")
+        self.lbl_card.setText(f"Card: {format_currency(t_card)}")
+        self.lbl_upi.setText(f"UPI: {format_currency(t_upi)}")
+        self.lbl_cheque.setText(f"Cheque: {format_currency(t_cheque)}")
 
-            total_sales += inv.get("grand_total", 0)
-            total_tax   += inv.get("tax_amount", 0)
-
-        self.lbl_count.setText(f"Invoices: {len(invoices)}")
-        self.lbl_total.setText(f"Total Sales: {format_currency(total_sales)}")
-        self.lbl_tax.setText(f"Total Tax: {format_currency(total_tax)}")
-
+    # ─────────────────────────────────────────────────────────
+    #  Actions
+    # ─────────────────────────────────────────────────────────
     def _open_detail(self, inv: dict):
         from ui.invoice_detail_dialog import InvoiceDetailDialog
         dlg = InvoiceDetailDialog(inv, self)
@@ -294,36 +570,193 @@ class SalesReportPage(QWidget):
 
     def _view_invoice(self):
         row = self.tbl.currentRow()
-        if row < 0 or row >= len(self._data):
-            return
-        self._open_detail(self._data[row])
+        if 0 <= row < len(self._flat_rows):
+            self._open_detail(self._flat_rows[row]["_inv"])
 
     def _reprint(self):
         row = self.tbl.currentRow()
-        if row < 0 or row >= len(self._data):
-            QMessageBox.information(self, "Print", "Select an invoice row first.")
+        if row < 0 or row >= len(self._flat_rows):
+            QMessageBox.information(self, "Print", "Select a row first.")
             return
-        inv = self._data[row]
-        save_invoice_as_pdf(inv, parent=self)
+        save_invoice_as_pdf(self._flat_rows[row]["_inv"], parent=self)
 
+    # ─────────────────────────────────────────────────────────
+    #  Export CSV
+    # ─────────────────────────────────────────────────────────
     def _export_csv(self):
-        if not self._data:
+        if not self._flat_rows:
             QMessageBox.information(self, "Export", "No data to export.")
             return
         from PyQt5.QtWidgets import QFileDialog
         path, _ = QFileDialog.getSaveFileName(
-            self, "Save CSV", f"sales_report_{date.today()}.csv", "CSV Files (*.csv)"
-        )
+            self, "Save CSV", f"sales_report_{date.today()}.csv", "CSV Files (*.csv)")
         if not path: return
         try:
+            fields = [
+                "invoice_number", "date", "customer_name",
+                "gross_sale", "discount", "sale_amount",
+                "cgst", "sgst", "other_purchase",
+                "advance", "cash", "card", "cheque", "dues",
+            ]
             with open(path, "w", newline="", encoding="utf-8") as f:
-                writer = csv.DictWriter(f, fieldnames=[
-                    "invoice_number","date","time","customer_name",
-                    "customer_mobile","subtotal","tax_amount","grand_total"
-                ])
-                writer.writeheader()
-                for inv in self._data:
-                    writer.writerow({k: inv.get(k,"") for k in writer.fieldnames})
+                w = csv.DictWriter(f, fieldnames=fields, extrasaction="ignore")
+                w.writeheader()
+                for row in self._flat_rows:
+                    w.writerow({k: row.get(k, "") for k in fields})
             QMessageBox.information(self, "Export", f"Exported to:\n{path}")
         except Exception as e:
             QMessageBox.critical(self, "Error", str(e))
+
+    # ─────────────────────────────────────────────────────────
+    #  Export Excel
+    # ─────────────────────────────────────────────────────────
+    def _export_excel(self):
+        if not self._flat_rows:
+            QMessageBox.information(self, "Export", "No data to export.")
+            return
+        try:
+            import openpyxl
+            from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+            from openpyxl.utils import get_column_letter
+        except ImportError:
+            QMessageBox.critical(self, "Missing Library",
+                "openpyxl is not installed.\n\nRun: pip install openpyxl")
+            return
+
+        from PyQt5.QtWidgets import QFileDialog
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save Excel", f"sales_report_{date.today()}.xlsx", "Excel Files (*.xlsx)")
+        if not path: return
+
+        try:
+            wb   = openpyxl.Workbook()
+            shop = AppConfig.shop()
+
+            hdr_fill = PatternFill("solid", fgColor="1F4E79")
+            hdr_font = Font(name="Calibri", bold=True, color="FFFFFF", size=11)
+            ttl_font = Font(name="Calibri", bold=True, size=14, color="1F4E79")
+            sub_fill = PatternFill("solid", fgColor="D6E4F0")
+            alt_fill = PatternFill("solid", fgColor="EBF5FB")
+            thin     = Side(style="thin", color="BFBFBF")
+            bdr      = Border(left=thin, right=thin, top=thin, bottom=thin)
+            ctr      = Alignment(horizontal="center", vertical="center")
+            lft      = Alignment(horizontal="left",   vertical="center")
+            mfmt     = '#,##0.00'
+
+            def hc(ws, row, col, val):
+                c = ws.cell(row=row, column=col, value=val)
+                c.font=hdr_font; c.fill=hdr_fill; c.alignment=ctr; c.border=bdr
+            def dc(ws, row, col, val, fmt=None, alt=False):
+                c = ws.cell(row=row, column=col, value=val)
+                c.alignment=ctr; c.border=bdr
+                if alt: c.fill=alt_fill
+                if fmt: c.number_format=fmt
+            def aw(ws, mn=8, mx=40):
+                for col in ws.columns:
+                    w = mn
+                    for cell in col:
+                        try: w = max(w, len(str(cell.value or "")))
+                        except: pass
+                    ws.column_dimensions[get_column_letter(col[0].column)].width = min(w+2, mx)
+
+            t_gross = sum(r["gross_sale"]  for r in self._flat_rows)
+            t_disc  = sum(r["discount"]    for r in self._flat_rows)
+            t_sale  = sum(r["sale_amount"] for r in self._flat_rows)
+            t_cgst  = sum(r["cgst"]        for r in self._flat_rows)
+            t_sgst  = sum(r["sgst"]        for r in self._flat_rows)
+            t_other = sum(r["other_purchase"] for r in self._flat_rows)
+            t_adv   = sum(r["advance"]     for r in self._flat_rows)
+            t_cash  = sum(r["cash"]        for r in self._flat_rows)
+            t_card  = sum(r["card"]        for r in self._flat_rows)
+            t_cheq  = sum(r["cheque"]      for r in self._flat_rows)
+            t_dues  = sum(r["dues"]        for r in self._flat_rows)
+            t_upi   = sum(float(r["_inv"].get("upi_paid", 0) or 0) for r in self._flat_rows)
+
+            # ════ Sheet 1 — Summary ═════════════════════════════
+            ws1 = wb.active; ws1.title = "Summary"
+            ws1.sheet_view.showGridLines = False
+            ws1.merge_cells("A1:D1")
+            t = ws1.cell(1, 1, f"{shop.get('shop_name','Jewelry Shop')}  —  Sales Report")
+            t.font = ttl_font; t.alignment = lft; ws1.row_dimensions[1].height = 28
+            ws1.merge_cells("A2:D2")
+            p = ws1.cell(2, 1,
+                f"Period: {self.dt_from.date().toString('yyyy-MM-dd')}  to  "
+                f"{self.dt_to.date().toString('yyyy-MM-dd')}    |    Generated: {date.today()}")
+            p.font = Font(name="Calibri", italic=True, color="7F7F7F", size=10)
+            p.alignment = lft
+            ws1.append([])
+            for off, (lbl, val, fmt) in enumerate([
+                ("Invoices",           len(self._flat_rows), None),
+                ("Gross Sale (₹)",     t_gross,  mfmt),
+                ("Discount (₹)",       t_disc,   mfmt),
+                ("Sale Amount (₹)",    t_sale,   mfmt),
+                ("CGST (₹)",           t_cgst,   mfmt),
+                ("SGST (₹)",           t_sgst,   mfmt),
+                ("Other Purchase (₹)", t_other,  mfmt),
+                ("Advance (₹)",        t_adv,    mfmt),
+                ("", "", None),
+                ("Cash (₹)",           t_cash,   mfmt),
+                ("Card (₹)",           t_card,   mfmt),
+                ("UPI (₹)",            t_upi,    mfmt),
+                ("Cheque (₹)",         t_cheq,   mfmt),
+                ("Total Dues (₹)",     t_dues,   mfmt),
+            ], start=4):
+                ws1.row_dimensions[off].height = 22
+                lc = ws1.cell(off, 1, lbl)
+                lc.font = Font(name="Calibri", bold=bool(lbl), size=10)
+                if lbl: lc.fill = sub_fill
+                lc.alignment = lft; lc.border = bdr
+                vc = ws1.cell(off, 2, val if lbl else "")
+                vc.alignment = ctr; vc.border = bdr
+                if fmt and lbl: vc.number_format = fmt
+            aw(ws1)
+            ws1.column_dimensions["A"].width = 26
+            ws1.column_dimensions["B"].width = 18
+
+            # ════ Sheet 2 — Invoice Details ══════════════════════
+            ws2 = wb.create_sheet("Invoice Details")
+            ws2.sheet_view.showGridLines = False
+            ws2.freeze_panes = "A2"
+            hdrs2 = [
+                "Invoice No", "Date", "Customer", "Mobile",
+                "Gross Sale (₹)", "Discount (₹)", "Sale Amt (₹)",
+                "CGST (₹)", "SGST (₹)", "Other Purch (₹)",
+                "Advance (₹)", "Cash (₹)", "Card (₹)",
+                "UPI (₹)", "Cheque (₹)", "Dues (₹)", "Remarks",
+            ]
+            for c, h in enumerate(hdrs2, 1): hc(ws2, 1, c, h)
+            ws2.row_dimensions[1].height = 24
+            mn_c = set(range(5, 17))
+            for r, row in enumerate(self._flat_rows, 2):
+                inv = row["_inv"]
+                alt = (r % 2 == 0)
+                for c, v in enumerate([
+                    row["invoice_number"],
+                    row["date"],
+                    row["customer_name"],
+                    inv.get("customer_mobile", ""),
+                    row["gross_sale"],
+                    row["discount"],
+                    row["sale_amount"],
+                    row["cgst"],
+                    row["sgst"],
+                    row["other_purchase"],
+                    row["advance"],
+                    row["cash"],
+                    row["card"],
+                    float(inv.get("upi_paid", 0) or 0),
+                    row["cheque"],
+                    row["dues"],
+                    inv.get("remarks", ""),
+                ], 1):
+                    dc(ws2, r, c, v, fmt=mfmt if c in mn_c else None, alt=alt)
+                ws2.row_dimensions[r].height = 20
+            aw(ws2)
+
+            wb.save(path)
+            QMessageBox.information(self, "Export Successful", f"Excel saved to:\n{path}")
+            try: os.startfile(path)
+            except: pass
+
+        except Exception as e:
+            QMessageBox.critical(self, "Export Error", str(e))

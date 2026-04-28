@@ -17,12 +17,12 @@ from ui.invoice_page       import InvoicePage
 from ui.sales_report_page  import SalesReportPage
 from ui.stock_page         import StockPage
 from ui.stock_report_page  import StockReportPage
-from ui.vendor_page        import VendorPage
-from ui.vendor_report_page import VendorReportPage
+from ui.stock_entry_page   import StockEntryPage
 from ui.customer_page      import CustomerPage
 from ui.settings_page      import SettingsPage
 from ui.backup_page        import BackupPage
 from ui.home_page          import HomePage
+from ui.karigar_page       import KarigarPage, KarigarDirectoryPage
 
 
 # (label, page-key, badge-letter, badge-color)
@@ -32,10 +32,11 @@ NAV_ITEMS = [
     ("  Sales Report",    "sales_report",    "S", "#2980b9"),
     ("  Invoice History", "invoice_history", "H", "#8e44ad"),
     ("  Stock",           "stock",           "S", "#16a085"),
+    ("  Stock Entry",     "stock_entry",     "E", "#0e6655"),
     ("  Stock Report",    "stock_report",    "R", "#d35400"),
-    ("  Vendors",         "vendors",         "V", "#c0392b"),
-    ("  Vendor Report",   "vendor_report",   "V", "#7f8c8d"),
-    ("  Customers",       "customers",       "C", "#1abc9c"),
+    ("  Karigar",           "karigar",           "K", "#8e44ad"),
+    ("  Karigar Directory","karigar_directory", "K", "#6c3483"),
+    ("  Customers",        "customers",         "C", "#1abc9c"),
     ("  Settings",        "settings",        "G", "#555e6d"),
     ("  Backup",          "backup",          "B", "#e74c3c"),
 ]
@@ -267,10 +268,11 @@ class DashboardWindow(QMainWindow):
             "sales_report":    SalesReportPage(),
             "invoice_history": SalesReportPage(history_mode=True),
             "stock":           StockPage(),
+            "stock_entry":     StockEntryPage(),
             "stock_report":    StockReportPage(),
-            "vendors":         VendorPage(),
-            "vendor_report":   VendorReportPage(),
-            "customers":       CustomerPage(),
+            "karigar":           KarigarPage(),
+            "karigar_directory": KarigarDirectoryPage(),
+            "customers":         CustomerPage(),
             "settings":        SettingsPage(),
             "backup":          BackupPage(),
         }

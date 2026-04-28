@@ -18,14 +18,16 @@ LOGS_DIR        = os.path.join(DATA_ROOT, "logs")
 ASSETS_DIR      = os.path.join(DATA_ROOT, "assets")   # ← logo, QR stored here
 
 # ─── JSON File Paths ────────────────────────────────────────
-SHOP_FILE       = os.path.join(DATA_DIR, "shop_details.json")
+SHOP_FILE           = os.path.join(DATA_DIR, "shop_details.json")
 STOCK_FILE          = os.path.join(DATA_DIR, "stock.json")
 ITEMS_CATALOG_FILE  = os.path.join(DATA_DIR, "item_catalog.json")
 METALS_FILE         = os.path.join(DATA_DIR, "metals.json")
 VENDORS_FILE        = os.path.join(DATA_DIR, "vendors.json")
-CUSTOMERS_FILE  = os.path.join(DATA_DIR, "customers.json")
-INVOICES_FILE   = os.path.join(DATA_DIR, "invoices.json")
-SETTINGS_FILE   = os.path.join(DATA_DIR, "settings.json")
+CUSTOMERS_FILE      = os.path.join(DATA_DIR, "customers.json")
+INVOICES_FILE       = os.path.join(DATA_DIR, "invoices.json")
+SETTINGS_FILE       = os.path.join(DATA_DIR, "settings.json")
+STOCK_ENTRY_FILE    = os.path.join(DATA_DIR, "stock_entries.json")
+KARIGAR_FILE        = os.path.join(DATA_DIR, "karigar_transactions.json")
 
 # ─── Image Asset Paths ───────────────────────────────────────
 LOGO_FILE        = os.path.join(ASSETS_DIR, "logo.png")          # shop logo (left header)
@@ -47,6 +49,7 @@ def set_data_root(new_root: str):
     global DATA_ROOT, DATA_DIR, BACKUP_DIR, INVOICES_PRINT, LOGS_DIR, ASSETS_DIR
     global SHOP_FILE, STOCK_FILE, ITEMS_CATALOG_FILE, VENDORS_FILE
     global CUSTOMERS_FILE, INVOICES_FILE, SETTINGS_FILE, LOGO_FILE, QR_FILE, METALS_FILE
+    global STOCK_ENTRY_FILE, KARIGAR_FILE
 
     DATA_ROOT      = new_root
     DATA_DIR       = os.path.join(DATA_ROOT, "data")
@@ -63,6 +66,8 @@ def set_data_root(new_root: str):
     CUSTOMERS_FILE     = os.path.join(DATA_DIR, "customers.json")
     INVOICES_FILE      = os.path.join(DATA_DIR, "invoices.json")
     SETTINGS_FILE      = os.path.join(DATA_DIR, "settings.json")
+    STOCK_ENTRY_FILE   = os.path.join(DATA_DIR, "stock_entries.json")
+    KARIGAR_FILE       = os.path.join(DATA_DIR, "karigar_transactions.json")
 
     LOGO_FILE        = os.path.join(ASSETS_DIR, "logo.png")
     QR_FILE          = os.path.join(ASSETS_DIR, "qr_code.png")

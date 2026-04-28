@@ -6,7 +6,7 @@ from app.config import AppConfig
 from app.utils import unique_id, current_date_str, current_datetime_str
 from models.invoice_model import InvoiceModel
 from services.customer_service import find_or_create_customer
-from services.stock_service import reduce_stock
+from services.stock_entry_service import add_entry as _add_stock_out
 from datetime import datetime
 
 
@@ -68,10 +68,35 @@ def create_invoice(
     if not save_all_invoices(invoices):
         raise RuntimeError("Failed to save invoice — stock was not reduced.")
 
-    # Only reduce stock after the invoice is durably written.
+    # Create a Stock OUT entry for each sold item so the stock ledger stays in sync.
+    date_str = now.strftime("%Y-%m-%d")
     for item in items:
-        if item.get("name"):
-            reduce_stock(item["name"], item.get("quantity", 1), item.get("purity", ""))
+        if not item.get("name"):
+            continue
+        _add_stock_out({
+            "entry_type":   "OUT",
+            "voucher_no":   inv_number,
+            "voucher_date": date_str,
+            "metal_type":   item.get("metal",  ""),
+            "item_name":    item.get("name",   ""),
+            "sub_name":     "",
+            "purity":       item.get("purity", ""),
+            # IN fields — empty for an OUT entry
+            "dabba_name":  "",
+            "dabba_wt":    0.0,
+            "gross_wt":    0.0,
+            "plastic_wt":  0.0,
+            "qty_in":      0,
+            "less_wt":     0.0,
+            "dia_wt":      0.0,
+            "net_wt":      0.0,
+            "location":    "OUT",
+            # OUT fields from the invoice line
+            "out_gross_wt": float(item.get("weight",      0)),
+            "out_net_wt":   float(item.get("nett_weight", 0)),
+            "qty_out":      int(item.get("quantity", 1)),
+            "remarks":      f"Invoice {inv_number} — {customer_name}",
+        })
 
     return inv_dict
 

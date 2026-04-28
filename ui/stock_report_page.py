@@ -1,24 +1,37 @@
-# ui/stock_report_page.py
+# ============================================================
+# ui/stock_report_page.py — Main Stock Ledger Report
+# ============================================================
+
+import csv
+from datetime import date
+
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QTableWidget, QTableWidgetItem, QFrame,
     QHeaderView, QAbstractItemView, QScrollArea, QComboBox,
-    QDoubleSpinBox
+    QDateEdit, QFileDialog, QMessageBox, QGroupBox,
 )
-from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QFont
-from services.stock_service import get_all_stock, get_low_stock
-from app.utils import format_currency
-from app.config import AppConfig
-import csv
-from datetime import date
+from PyQt5.QtCore import Qt, QDate
+from PyQt5.QtGui import QFont, QColor
+
+from services.stock_entry_service import get_all_entries
+
+
+_FILTER_GRP = (
+    "QGroupBox{font-size:11px;font-weight:bold;color:#555;"
+    "border:1px solid #dfe6e9;border-radius:6px;margin-top:8px;padding-top:4px;}"
+    "QGroupBox::title{subcontrol-origin:margin;left:10px;padding:0 4px;}"
+)
 
 
 class StockReportPage(QWidget):
     def __init__(self):
         super().__init__()
+        self._entries: list[dict] = []
+        self._current_data: list[dict] = []
         self._build_ui()
 
+    # ──────────────────────────────────────────────────────
     def _build_ui(self):
         scroll = QScrollArea(self)
         scroll.setWidgetResizable(True)
@@ -31,155 +44,397 @@ class StockReportPage(QWidget):
         scroll.setWidget(container)
         root = QVBoxLayout(container)
         root.setContentsMargins(25, 20, 25, 20)
-        root.setSpacing(14)
+        root.setSpacing(12)
 
-        title = QLabel("📈  Stock Report")
+        # Title
+        title = QLabel("📊  Stock Report")
         title.setFont(QFont("Segoe UI", 16, QFont.Bold))
         root.addWidget(title)
 
-        # Filter row
-        fr = QHBoxLayout()
-        fr.addWidget(QLabel("Category:"))
-        self.cmb_cat = QComboBox(); self.cmb_cat.setMinimumHeight(32)
-        self.cmb_cat.currentTextChanged.connect(self._apply_filter)
-        fr.addWidget(self.cmb_cat)
-        fr.addWidget(QLabel("Search:"))
-        self.txt_s = QLineEdit(); self.txt_s.setPlaceholderText("Item name / vendor"); self.txt_s.setMinimumHeight(32)
-        self.txt_s.textChanged.connect(self._apply_filter)
-        fr.addWidget(self.txt_s)
-        fr.addStretch()
-        root.addLayout(fr)
+        # ── Filter group ───────────────────────────────────
+        fgrp = QGroupBox("Filters")
+        fgrp.setStyleSheet(_FILTER_GRP)
+        fv = QVBoxLayout(fgrp)
+        fv.setSpacing(6)
+        fv.setContentsMargins(10, 8, 10, 10)
 
-        # Low stock filter row
-        lf = QHBoxLayout()
-        lf.addWidget(QLabel("Low Stock — Column:"))
+        # Row 1 — date range
+        row1 = QHBoxLayout(); row1.setSpacing(8)
 
-        self.cmb_low_col = QComboBox()
-        self.cmb_low_col.setMinimumHeight(32)
-        self.cmb_low_col.setMinimumWidth(130)
-        self.cmb_low_col.addItems(["Quantity", "Gross Wt (g)", "Net Wt (g)"])
-        lf.addWidget(self.cmb_low_col)
+        row1.addWidget(self._lbl("From:"))
+        self.dt_from = QDateEdit()
+        self.dt_from.setCalendarPopup(True)
+        self.dt_from.setDisplayFormat("dd-MM-yyyy")
+        today = QDate.currentDate()
+        self.dt_from.setDate(QDate(today.year(), today.month(), 1))
+        self.dt_from.setFixedHeight(30)
+        row1.addWidget(self.dt_from)
 
-        lf.addWidget(QLabel("Below:"))
-        self.spn_threshold = QDoubleSpinBox()
-        self.spn_threshold.setRange(0, 99999)
-        self.spn_threshold.setDecimals(3)
-        self.spn_threshold.setValue(2)
-        self.spn_threshold.setMinimumHeight(32)
-        self.spn_threshold.setMinimumWidth(90)
-        lf.addWidget(self.spn_threshold)
+        row1.addWidget(self._lbl("To:"))
+        self.dt_to = QDateEdit()
+        self.dt_to.setCalendarPopup(True)
+        self.dt_to.setDisplayFormat("dd-MM-yyyy")
+        self.dt_to.setDate(today)
+        self.dt_to.setFixedHeight(30)
+        row1.addWidget(self.dt_to)
 
-        btn_low = QPushButton("⚠️  Low Stock Only")
-        btn_low.setStyleSheet("background:#e74c3c; color:white; border-radius:4px; padding:6px 14px;")
-        btn_low.clicked.connect(self._show_low)
-        lf.addWidget(btn_low)
+        btn_apply = QPushButton("Apply Date")
+        btn_apply.setFixedHeight(30)
+        btn_apply.setStyleSheet(
+            "QPushButton{background:#2980b9;color:white;border-radius:4px;"
+            "padding:2px 14px;font-size:11px;font-weight:bold;border:none;}"
+            "QPushButton:hover{background:#2471a3;}"
+        )
+        btn_apply.clicked.connect(self._apply_with_dates)
+        row1.addWidget(btn_apply)
 
-        btn_all = QPushButton("Show All")
-        btn_all.setStyleSheet("background:#7f8c8d; color:white; border-radius:4px; padding:6px 12px;")
-        btn_all.clicked.connect(self.refresh)
-        lf.addWidget(btn_all)
+        btn_all = QPushButton("All Dates")
+        btn_all.setFixedHeight(30)
+        btn_all.setStyleSheet(
+            "QPushButton{background:#7f8c8d;color:white;border-radius:4px;"
+            "padding:2px 12px;font-size:11px;border:none;}"
+            "QPushButton:hover{background:#626567;}"
+        )
+        btn_all.clicked.connect(self._apply_all_dates)
+        row1.addWidget(btn_all)
 
-        lf.addStretch()
-        root.addLayout(lf)
+        row1.addStretch()
+        fv.addLayout(row1)
 
-        # Table
+        # Row 2 — item filters
+        row2 = QHBoxLayout(); row2.setSpacing(8)
+
+        row2.addWidget(self._lbl("Metal:"))
+        self.cmb_metal = QComboBox()
+        self.cmb_metal.setFixedHeight(30)
+        self.cmb_metal.setMinimumWidth(110)
+        self.cmb_metal.currentTextChanged.connect(self._refilter)
+        row2.addWidget(self.cmb_metal)
+
+        row2.addWidget(self._lbl("Purity:"))
+        self.cmb_purity = QComboBox()
+        self.cmb_purity.setFixedHeight(30)
+        self.cmb_purity.setMinimumWidth(86)
+        self.cmb_purity.currentTextChanged.connect(self._refilter)
+        row2.addWidget(self.cmb_purity)
+
+        row2.addWidget(self._lbl("Item:"))
+        self.txt_item = QLineEdit()
+        self.txt_item.setPlaceholderText("Search item name…")
+        self.txt_item.setFixedHeight(30)
+        self.txt_item.setMinimumWidth(150)
+        self.txt_item.textChanged.connect(self._refilter)
+        row2.addWidget(self.txt_item)
+
+        row2.addWidget(self._lbl("Type:"))
+        self.cmb_type = QComboBox()
+        self.cmb_type.addItems(["All", "IN", "OUT"])
+        self.cmb_type.setFixedHeight(30)
+        self.cmb_type.setMinimumWidth(72)
+        self.cmb_type.currentTextChanged.connect(self._refilter)
+        row2.addWidget(self.cmb_type)
+
+        row2.addStretch()
+        fv.addLayout(row2)
+        root.addWidget(fgrp)
+
+        # ── Table ──────────────────────────────────────────
         self.tbl = QTableWidget()
-        self.tbl.setColumnCount(9)
-        self.tbl.setHorizontalHeaderLabels(["Item", "Category", "Purity", "Gross(g)", "Net(g)", "Qty", "Buy Price", "Sell Price", "Vendor"])
-        self.tbl.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        _H = [
+            "Product Details", "Purity",
+            "O. A/c (g)", "Wt In (g)", "Wt Out (g)", "Closing (g)",
+            "In Pcs", "Out Pcs", "Stock Pcs",
+        ]
+        self.tbl.setColumnCount(len(_H))
+        self.tbl.setHorizontalHeaderLabels(_H)
+        hdr = self.tbl.horizontalHeader()
+        hdr.setSectionResizeMode(0, QHeaderView.Stretch)
+        _fixed = {1: 78, 2: 90, 3: 90, 4: 90, 5: 90, 6: 68, 7: 68, 8: 78}
+        for c, w in _fixed.items():
+            self.tbl.setColumnWidth(c, w)
+            hdr.setSectionResizeMode(c, QHeaderView.Fixed)
+        self.tbl.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.tbl.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.tbl.setAlternatingRowColors(True)
-        self.tbl.setMinimumHeight(360)
+        self.tbl.setMinimumHeight(400)
+        self.tbl.verticalHeader().setVisible(False)
+        self.tbl.verticalHeader().setDefaultSectionSize(30)
         root.addWidget(self.tbl)
 
-        # Summary
+        # ── Summary footer ─────────────────────────────────
         sf = QFrame()
-        sf.setStyleSheet("background:white; border:1px solid #e0e0e0; border-radius:5px; padding:6px;")
+        sf.setStyleSheet(
+            "background:white; border:1px solid #e0e0e0;"
+            "border-radius:5px; padding:6px;"
+        )
         sl = QHBoxLayout(sf)
-        self.lbl_items = QLabel("Items: 0")
-        self.lbl_val   = QLabel("Stock Value: ₹ 0.00")
-        for l in (self.lbl_items, self.lbl_val):
-            l.setFont(QFont("Segoe UI", 12, QFont.Bold)); l.setStyleSheet("background:transparent; color:#2c3e50;")
-        sl.addWidget(self.lbl_items); sl.addStretch(); sl.addWidget(self.lbl_val)
+        self.lbl_rows    = QLabel("Items: 0")
+        self.lbl_wt_in   = QLabel("Wt IN: 0.000 g")
+        self.lbl_wt_out  = QLabel("Wt OUT: 0.000 g")
+        self.lbl_closing = QLabel("Closing: 0.000 g")
+        for lbl in (self.lbl_rows, self.lbl_wt_in, self.lbl_wt_out, self.lbl_closing):
+            lbl.setFont(QFont("Segoe UI", 11, QFont.Bold))
+            lbl.setStyleSheet("background:transparent; color:#2c3e50;")
+        sl.addWidget(self.lbl_rows)
+        sl.addStretch()
+        sl.addWidget(self.lbl_wt_in)
+        sl.addStretch()
+        sl.addWidget(self.lbl_wt_out)
+        sl.addStretch()
+        sl.addWidget(self.lbl_closing)
         root.addWidget(sf)
 
-        # Export
+        # ── Export ─────────────────────────────────────────
         act = QHBoxLayout(); act.addStretch()
         btn_exp = QPushButton("📤  Export CSV")
-        btn_exp.setStyleSheet("background:#27ae60; color:white; border-radius:4px; padding:8px 16px;")
+        btn_exp.setStyleSheet(
+            "QPushButton{background:#27ae60;color:white;border-radius:4px;"
+            "padding:8px 16px;font-size:12px;border:none;}"
+            "QPushButton:hover{background:#229954;}"
+        )
         btn_exp.clicked.connect(self._export)
         act.addWidget(btn_exp)
         root.addLayout(act)
 
-        self._all_stock: list = []
+        # State: whether a date range is active
+        self._date_active = False
 
+    # ──────────────────────────────────────────────────────
+    #  Helpers
+    # ──────────────────────────────────────────────────────
+    @staticmethod
+    def _lbl(text: str) -> QLabel:
+        l = QLabel(text)
+        l.setStyleSheet("color:#444; font-size:11px; font-weight:600;")
+        return l
+
+    # ──────────────────────────────────────────────────────
+    #  Public refresh — called when page is navigated to
+    # ──────────────────────────────────────────────────────
     def refresh(self):
-        curr = self.cmb_cat.currentText()
-        self.cmb_cat.blockSignals(True)
-        self.cmb_cat.clear()
-        self.cmb_cat.addItems(["All"] + AppConfig.categories())
-        if curr:
-            idx = self.cmb_cat.findText(curr)
-            if idx >= 0: self.cmb_cat.setCurrentIndex(idx)
-            else: self.cmb_cat.setCurrentIndex(0)
-        self.cmb_cat.blockSignals(False)
+        self._entries = get_all_entries()
+        self._rebuild_combos()
+        # Keep whatever date/filter state was set; just re-run
+        self._compute_and_display()
 
-        self._all_stock = get_all_stock()
-        self._apply_filter()
+    # ──────────────────────────────────────────────────────
+    #  Rebuild Metal / Purity combo options
+    # ──────────────────────────────────────────────────────
+    def _rebuild_combos(self):
+        metals   = sorted({e.get("metal_type","") for e in self._entries if e.get("metal_type")})
+        purities = sorted({e.get("purity","")     for e in self._entries if e.get("purity")})
 
-    def _apply_filter(self):
-        cat = self.cmb_cat.currentText()
-        q   = self.txt_s.text().lower()
-        data = self._all_stock
-        if cat != "All":
-            data = [s for s in data if s.get("category","") == cat]
-        if q:
-            data = [s for s in data if q in s.get("item_name","").lower() or q in s.get("vendor_name","").lower()]
-        self._populate(data)
+        for cmb, options in ((self.cmb_metal, metals), (self.cmb_purity, purities)):
+            curr = cmb.currentText()
+            cmb.blockSignals(True)
+            cmb.clear(); cmb.addItem("All")
+            cmb.addItems(options)
+            idx = cmb.findText(curr)
+            cmb.setCurrentIndex(idx if idx >= 0 else 0)
+            cmb.blockSignals(False)
 
-    def _show_low(self):
-        col_map = {
-            "Quantity":     "quantity",
-            "Gross Wt (g)": "gross_weight",
-            "Net Wt (g)":   "net_weight",
-        }
-        col       = col_map[self.cmb_low_col.currentText()]
-        threshold = self.spn_threshold.value()
-        self._populate(get_low_stock(threshold=threshold, column=col))
+    # ──────────────────────────────────────────────────────
+    #  Button actions
+    # ──────────────────────────────────────────────────────
+    def _apply_with_dates(self):
+        self._date_active = True
+        self._compute_and_display()
 
+    def _apply_all_dates(self):
+        self._date_active = False
+        self._compute_and_display()
+
+    def _refilter(self):
+        """Called when a combo/textbox filter changes — reuse existing entries."""
+        self._compute_and_display()
+
+    # ──────────────────────────────────────────────────────
+    #  Core computation
+    # ──────────────────────────────────────────────────────
+    def _compute_and_display(self):
+        from_str = (self.dt_from.date().toString("yyyy-MM-dd")
+                    if self._date_active else "")
+        to_str   = (self.dt_to.date().toString("yyyy-MM-dd")
+                    if self._date_active else "")
+
+        metal  = self.cmb_metal.currentText()
+        purity = self.cmb_purity.currentText()
+        item_q = self.txt_item.text().strip().lower()
+        type_f = self.cmb_type.currentText()
+
+        # Bucket entries
+        before: list[dict] = []   # contributes to O. A/c
+        period: list[dict] = []   # contributes to Wt In / Wt Out
+
+        for e in self._entries:
+            # Item-level filters
+            if metal  != "All" and e.get("metal_type","") != metal:           continue
+            if purity != "All" and e.get("purity","")     != purity:          continue
+            if item_q and item_q not in e.get("item_name","").lower():         continue
+            if type_f != "All" and e.get("entry_type","") != type_f:          continue
+
+            d = e.get("voucher_date","")
+            if from_str and d < from_str:
+                before.append(e)
+            elif to_str and d > to_str:
+                pass   # outside range — ignore
+            else:
+                period.append(e)
+
+        # Aggregate into groups keyed by (item_name, purity)
+        groups: dict = {}
+
+        def _get(e):
+            key = (e.get("item_name",""), e.get("purity",""))
+            if key not in groups:
+                groups[key] = {
+                    "item_name": key[0], "purity": key[1],
+                    "open_wt": 0.0, "open_pcs": 0,
+                    "wt_in":   0.0, "in_pcs":   0,
+                    "wt_out":  0.0, "out_pcs":  0,
+                }
+            return groups[key]
+
+        for e in before:
+            g = _get(e)
+            if e.get("entry_type") == "IN":
+                g["open_wt"]  += e.get("net_wt",      0.0)
+                g["open_pcs"] += e.get("qty_in",       0)
+            else:
+                g["open_wt"]  -= e.get("out_net_wt",  0.0)
+                g["open_pcs"] -= e.get("qty_out",      0)
+
+        for e in period:
+            g = _get(e)
+            if e.get("entry_type") == "IN":
+                g["wt_in"]  += e.get("net_wt",     0.0)
+                g["in_pcs"] += e.get("qty_in",      0)
+            else:
+                g["wt_out"]  += e.get("out_net_wt", 0.0)
+                g["out_pcs"] += e.get("qty_out",    0)
+
+        result = []
+        for g in groups.values():
+            g["closing_wt"]  = round(g["open_wt"] + g["wt_in"] - g["wt_out"], 3)
+            g["stock_pcs"]   = g["open_pcs"] + g["in_pcs"] - g["out_pcs"]
+            result.append(g)
+
+        result.sort(key=lambda x: x.get("item_name","").lower())
+        self._current_data = result
+        self._populate(result)
+
+    # ──────────────────────────────────────────────────────
+    #  Populate table
+    # ──────────────────────────────────────────────────────
     def _populate(self, data: list):
         self.tbl.setRowCount(0)
-        total_val = 0.0
-        for s in data:
-            r = self.tbl.rowCount(); self.tbl.insertRow(r)
-            qty = s.get("quantity", 0)
-            val = s.get("purchase_price", 0) * qty
-            total_val += val
+        t_open = t_in = t_out = t_close = 0.0
+        t_in_pcs = t_out_pcs = t_stock = 0
+
+        for g in data:
+            r = self.tbl.rowCount()
+            self.tbl.insertRow(r)
+            closing = g["closing_wt"]
+            stock   = g["stock_pcs"]
+
             vals = [
-                s.get("item_name",""), s.get("category",""), s.get("purity",""),
-                str(s.get("gross_weight","")), str(s.get("net_weight","")),
-                str(qty),
-                format_currency(s.get("purchase_price",0)),
-                format_currency(s.get("selling_price",0)),
-                s.get("vendor_name",""),
+                g["item_name"],
+                g["purity"],
+                f"{g['open_wt']:.3f}",
+                f"{g['wt_in']:.3f}",
+                f"{g['wt_out']:.3f}",
+                f"{closing:.3f}",
+                str(g["in_pcs"]),
+                str(g["out_pcs"]),
+                str(stock),
             ]
+            _right = {2, 3, 4, 5, 6, 7, 8}
             for c, v in enumerate(vals):
                 cell = QTableWidgetItem(v)
-                cell.setTextAlignment(Qt.AlignCenter)
-                if c == 5 and qty <= 2:
-                    cell.setForeground(Qt.red)
+                cell.setTextAlignment(
+                    Qt.AlignRight | Qt.AlignVCenter if c in _right
+                    else Qt.AlignLeft  | Qt.AlignVCenter
+                )
+                if c == 5:
+                    cell.setForeground(
+                        QColor("#1e8449") if closing > 0 else QColor("#e74c3c")
+                    )
+                if c == 8 and stock <= 0:
+                    cell.setForeground(QColor("#e74c3c"))
                 self.tbl.setItem(r, c, cell)
-        self.lbl_items.setText(f"Items: {len(data)}")
-        self.lbl_val.setText(f"Stock Value: {format_currency(total_val)}")
 
+            t_open   += g["open_wt"]
+            t_in     += g["wt_in"]
+            t_out    += g["wt_out"]
+            t_close  += closing
+            t_in_pcs    += g["in_pcs"]
+            t_out_pcs   += g["out_pcs"]
+            t_stock     += stock
+
+        # Totals footer row
+        if data:
+            r = self.tbl.rowCount()
+            self.tbl.insertRow(r)
+            fb = QColor("#eaf2ff")
+            footer = [
+                "TOTAL", "",
+                f"{t_open:.3f}",
+                f"{t_in:.3f}",
+                f"{t_out:.3f}",
+                f"{t_close:.3f}",
+                str(t_in_pcs),
+                str(t_out_pcs),
+                str(t_stock),
+            ]
+            for c, v in enumerate(footer):
+                cell = QTableWidgetItem(v)
+                cell.setTextAlignment(Qt.AlignCenter)
+                cell.setBackground(fb)
+                f = cell.font(); f.setBold(True); cell.setFont(f)
+                self.tbl.setItem(r, c, cell)
+
+        self.lbl_rows.setText(f"Items: {len(data)}")
+        self.lbl_wt_in.setText(f"Wt IN: {t_in:.3f} g")
+        self.lbl_wt_out.setText(f"Wt OUT: {t_out:.3f} g")
+        self.lbl_closing.setText(f"Closing: {t_close:.3f} g")
+
+    # ──────────────────────────────────────────────────────
+    #  Export
+    # ──────────────────────────────────────────────────────
     def _export(self):
-        if not self._all_stock:
+        if not self._current_data:
+            QMessageBox.information(self, "Export", "No data to export.")
             return
-        from PyQt5.QtWidgets import QFileDialog
-        path, _ = QFileDialog.getSaveFileName(self, "Export", f"stock_report_{date.today()}.csv", "CSV (*.csv)")
-        if not path: return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export CSV",
+            f"stock_report_{date.today()}.csv",
+            "CSV (*.csv)"
+        )
+        if not path:
+            return
+        fields = [
+            "item_name", "purity",
+            "open_wt", "wt_in", "wt_out", "closing_wt",
+            "in_pcs", "out_pcs", "stock_pcs",
+        ]
+        headers = [
+            "Product Details", "Purity",
+            "O. A/c (g)", "Wt In (g)", "Wt Out (g)", "Closing (g)",
+            "In Pcs", "Out Pcs", "Stock Pcs",
+        ]
         with open(path, "w", newline="", encoding="utf-8") as f:
-            w = csv.DictWriter(f, fieldnames=["item_name","category","purity","gross_weight","net_weight","quantity","purchase_price","selling_price","vendor_name"])
-            w.writeheader(); [w.writerow({k: s.get(k,"") for k in w.fieldnames}) for s in self._all]
-        from PyQt5.QtWidgets import QMessageBox
+            writer = csv.writer(f)
+            writer.writerow(headers)
+            for g in self._current_data:
+                writer.writerow([
+                    g.get("item_name",""),
+                    g.get("purity",""),
+                    f"{g.get('open_wt',0.0):.3f}",
+                    f"{g.get('wt_in',0.0):.3f}",
+                    f"{g.get('wt_out',0.0):.3f}",
+                    f"{g.get('closing_wt',0.0):.3f}",
+                    g.get("in_pcs",0),
+                    g.get("out_pcs",0),
+                    g.get("stock_pcs",0),
+                ])
         QMessageBox.information(self, "Export", f"Saved to:\n{path}")
