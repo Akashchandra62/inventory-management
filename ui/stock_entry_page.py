@@ -16,7 +16,7 @@ from services.stock_entry_service import (
     get_all_entries, add_entry, get_next_voucher_no,
 )
 from services.metal_service import get_metals
-from services.item_catalog_service import get_item_by_name, get_names as get_catalog_names
+from services.item_catalog_service import get_item_by_name, get_item_by_code, get_names as get_catalog_names
 
 PURITY_OPTIONS   = ["22Kt", "18Kt", "14Kt", "92.5", "99.9", "60-70", "Other"]
 LOCATION_OPTIONS = ["SHOWROOM", "TRANSACTION"]
@@ -200,9 +200,9 @@ class StockEntryPage(QWidget):
         self.item  = _line("Search item name…")
         row(1, "Metal", self.metal, "Item Name *", self.item)
 
-        self.subname = _line("Sub / variant name")
+        self.subname = _line("Supplier name")
         self.purity  = _cmb(PURITY_OPTIONS, editable=True)
-        row(2, "Sub Name", self.subname, "Purity", self.purity)
+        row(2, "Supplier Name", self.subname, "Purity", self.purity)
 
         # ── IN section ────────────────────────────────────
         g.addWidget(_sep_label("─  Stock IN Details  ─", _SEC_LBL_IN), 3, 0, 1, 4)
@@ -360,10 +360,10 @@ class StockEntryPage(QWidget):
         self.f_purity.currentIndexChanged.connect(self._do_filter)
         _f(row1, "Purity:", self.f_purity)
 
-        self.f_subname = _line("sub name…")
+        self.f_subname = _line("supplier name…")
         self.f_subname.setFixedWidth(110)
         self.f_subname.textChanged.connect(self._on_filter_text)
-        _f(row1, "Sub Name:", self.f_subname)
+        _f(row1, "Supplier Name:", self.f_subname)
 
         self.f_item = _line("item name…")
         self.f_item.setFixedWidth(120)
@@ -409,7 +409,7 @@ class StockEntryPage(QWidget):
     # ──────────────────────────────────────────────────────
     def _build_table(self):
         self.tbl = QTableWidget()
-        _H = ["Group", "Product", "Sub Name",
+        _H = ["Group", "Product", "Supplier Name",
               "Wt In (g)", "Wt Out (g)", "Qty In", "Qty Out",
               "Date", "Dabba", "Bill / Voucher", "Remarks", "Type"]
         self.tbl.setColumnCount(len(_H))
@@ -712,11 +712,21 @@ class StockEntryPage(QWidget):
         try:   c.activated.disconnect()
         except Exception: pass
         c.activated.connect(self._autofill_item)
-        self.item.returnPressed.connect(lambda: self._autofill_item(self.item.text().strip()))
+        # Guard: connect returnPressed only once across multiple refresh() calls
+        if not getattr(self, '_item_autofill_connected', False):
+            self.item.returnPressed.connect(lambda: self._autofill_item(self.item.text().strip()))
+            self._item_autofill_connected = True
 
     def _autofill_item(self, name: str):
         if not name: return
         cat = get_item_by_name(name)
+        if not cat:
+            # Try shortcut code lookup and fill the full name into the field
+            cat = get_item_by_code(name)
+            if cat:
+                self.item.blockSignals(True)
+                self.item.setText(cat["name"])
+                self.item.blockSignals(False)
         if not cat: return
         purity = cat.get("purity", "")
         if purity:

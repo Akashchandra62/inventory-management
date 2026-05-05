@@ -2,6 +2,7 @@
 # services/metal_service.py - Metals / Rate-card master list
 # Each record: {id, name, purity, rate, labour}
 # ============================================================
+from __future__ import annotations
 
 import uuid
 from app.file_manager import safe_read, safe_write

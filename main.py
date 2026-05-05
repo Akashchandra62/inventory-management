@@ -7,12 +7,16 @@ import sys
 import os
 
 # ── Ensure project root is on sys.path ──────────────────────
-ROOT = os.path.dirname(os.path.abspath(__file__))
+# When frozen by PyInstaller (--onefile), sys._MEIPASS is the temp extraction dir
+if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+    ROOT = sys._MEIPASS
+else:
+    ROOT = os.path.dirname(os.path.abspath(__file__))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 # ── Windows DLL Fix ─────────────────────────────────────────
-# MUST run BEFORE any PyQt6 import.
+# MUST run BEFORE any PyQt5 import.
 # Fixes: "DLL load failed while importing QtCore"
 if sys.platform == "win32":
     try:
@@ -30,7 +34,7 @@ if sys.platform == "win32":
     except Exception:
         pass
 
-# ── Safe to import PyQt6 now ─────────────────────────────────
+# ── Safe to import PyQt5 now ─────────────────────────────────
 import logging
 from PyQt5.QtWidgets import QApplication, QMessageBox, QPushButton
 from PyQt5.QtGui import QFont

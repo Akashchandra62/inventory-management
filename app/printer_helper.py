@@ -216,11 +216,14 @@ def _generate_pdf(invoice: dict, path: str):
     subtotal         = float(invoice.get("subtotal",   0))
     cgst_pct         = float(invoice.get("cgst_percent", 1.5))
     sgst_pct         = float(invoice.get("sgst_percent", 1.5))
-    cgst_amt         = round(subtotal * cgst_pct / 100, 2)
-    sgst_amt         = round(subtotal * sgst_pct / 100, 2)
-    amt_after_gst    = round(subtotal + cgst_amt + sgst_amt, 2)
+    igst_pct         = float(invoice.get("igst_percent", 0))
+    # Use stored tax amounts — never recompute, to ensure PDF matches saved record
+    cgst_amt         = float(invoice.get("cgst_amount", round(subtotal * cgst_pct / 100, 2)))
+    sgst_amt         = float(invoice.get("sgst_amount", round(subtotal * sgst_pct / 100, 2)))
+    igst_amt         = float(invoice.get("igst_amount", round(subtotal * igst_pct / 100, 2)))
+    amt_after_gst    = round(subtotal + cgst_amt + sgst_amt + igst_amt, 2)
     grand_total      = float(invoice.get("grand_total", amt_after_gst))
-    round_off        = round(grand_total - amt_after_gst, 2)
+    round_off        = float(invoice.get("round_off", round(grand_total - amt_after_gst, 2)))
     cash_paid        = float(invoice.get("cash_paid",    0))
     upi_paid         = float(invoice.get("upi_paid",     0))
     card_paid        = float(invoice.get("card_paid",    0))
@@ -489,15 +492,16 @@ def _generate_pdf(invoice: dict, path: str):
 
         for it in grp_items:
             serial_no += 1
-            gw  = float(it.get('weight',        0))
-            lw  = float(it.get('less_weight',   0))
-            nw  = round(gw - lw, 3)
-            mk  = float(it.get('making_charge', 0))
-            amt = float(it.get('total',         0))
-            cat = it.get('category', '')
+            gw      = float(it.get('weight',        0))
+            lw      = float(it.get('less_weight',   0))
+            nw      = round(gw - lw, 3)
+            mk      = float(it.get('making_charge', 0))
+            mk_pct  = float(it.get('making_pct',    0))
+            amt     = float(it.get('total',         0))
+            cat     = it.get('category', '')
             gross_tot += gw;  nett_tot  += nw
             gw_grp    += gw;  nw_grp    += nw;  amt_grp += amt
-            mk_str = f"{mk:.2f}%" if mk <= 100 else f"\u20b9{mk:,.2f}"
+            mk_str = f"{mk_pct:.2f}%" if mk_pct > 0 else f"\u20b9{mk:,.2f}"
 
             name_p = Paragraph(
                 f'<b>{it.get("name", "")}</b>'
@@ -872,10 +876,12 @@ def _build_html_preview(invoice: dict) -> str:
     subtotal = float(invoice.get("subtotal",   0))
     cgst_pct = float(invoice.get("cgst_percent", 1.5))
     sgst_pct = float(invoice.get("sgst_percent", 1.5))
-    cgst_amt = round(subtotal * cgst_pct / 100, 2)
-    sgst_amt = round(subtotal * sgst_pct / 100, 2)
-    grand    = float(invoice.get("grand_total", subtotal + cgst_amt + sgst_amt))
-    round_off = round(grand - (subtotal + cgst_amt + sgst_amt), 2)
+    igst_pct = float(invoice.get("igst_percent", 0))
+    cgst_amt = float(invoice.get("cgst_amount", round(subtotal * cgst_pct / 100, 2)))
+    sgst_amt = float(invoice.get("sgst_amount", round(subtotal * sgst_pct / 100, 2)))
+    igst_amt = float(invoice.get("igst_amount", round(subtotal * igst_pct / 100, 2)))
+    grand    = float(invoice.get("grand_total", subtotal + cgst_amt + sgst_amt + igst_amt))
+    round_off = float(invoice.get("round_off", round(grand - (subtotal + cgst_amt + sgst_amt + igst_amt), 2)))
     _cash_h  = float(invoice.get("cash_paid",    0))
     _upi_h   = float(invoice.get("upi_paid",     0))
     _card_h  = float(invoice.get("card_paid",    0))
@@ -916,8 +922,9 @@ def _build_html_preview(invoice: dict) -> str:
             gw  = float(it.get('weight', 0))
             lw  = float(it.get('less_weight', 0))
             nw  = round(gw - lw, 3)
-            mk  = float(it.get('making_charge', 0))
-            mk_s = f"{mk:.2f}%" if mk <= 100 else f"₹{mk:,.2f}"
+            mk     = float(it.get('making_charge', 0))
+            mk_pct = float(it.get('making_pct',    0))
+            mk_s   = f"{mk_pct:.2f}%" if mk_pct > 0 else f"₹{mk:,.2f}"
             gw_grp += gw; nw_grp += nw; amt_grp += float(it.get('total', 0))
             serial += 1
             rows_html += (

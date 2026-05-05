@@ -62,9 +62,12 @@ def _kv_row(key: str, value: str, bold_val: bool = False) -> QHBoxLayout:
 
 
 class InvoiceDetailDialog(QDialog):
-    def __init__(self, invoice: dict, parent=None):
+    def __init__(self, invoice: dict, parent=None,
+                 on_edit=None, on_duplicate=None):
         super().__init__(parent)
-        self._invoice = invoice
+        self._invoice     = invoice
+        self._on_edit      = on_edit
+        self._on_duplicate = on_duplicate
         inv_no = invoice.get("invoice_number", "")
         self.setWindowTitle(f"Invoice Details  —  {inv_no}")
         self.setMinimumWidth(780)
@@ -338,6 +341,24 @@ class InvoiceDetailDialog(QDialog):
         )
         btn_pdf.clicked.connect(self._download_pdf)
 
+        btn_dup = QPushButton("📋  Duplicate")
+        btn_dup.setToolTip("Open a new invoice pre-filled with this invoice's data")
+        btn_dup.setStyleSheet(
+            "QPushButton{background:#8e44ad;color:white;border-radius:5px;"
+            "padding:9px 20px;font-weight:bold;border:none;}"
+            "QPushButton:hover{background:#7d3c98;}"
+        )
+        btn_dup.clicked.connect(self._duplicate)
+
+        btn_edit = QPushButton("✏️  Edit Invoice")
+        btn_edit.setToolTip("Edit and update this saved invoice")
+        btn_edit.setStyleSheet(
+            "QPushButton{background:#2980b9;color:white;border-radius:5px;"
+            "padding:9px 20px;font-weight:bold;border:none;}"
+            "QPushButton:hover{background:#2471a3;}"
+        )
+        btn_edit.clicked.connect(self._edit)
+
         btn_close = QPushButton("Close")
         btn_close.setStyleSheet(
             "QPushButton{background:#7f8c8d;color:white;border-radius:5px;"
@@ -348,8 +369,20 @@ class InvoiceDetailDialog(QDialog):
 
         fl.addStretch()
         fl.addWidget(btn_pdf)
+        fl.addWidget(btn_dup)
+        fl.addWidget(btn_edit)
         fl.addWidget(btn_close)
         outer.addWidget(foot)
+
+    def _edit(self):
+        if self._on_edit:
+            self._on_edit(self._invoice)
+            self.accept()
+
+    def _duplicate(self):
+        if self._on_duplicate:
+            self._on_duplicate(self._invoice)
+            self.accept()
 
     def _download_pdf(self):
         from app.printer_helper import save_invoice_as_pdf

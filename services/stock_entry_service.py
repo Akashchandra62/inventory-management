@@ -70,6 +70,7 @@ def get_inventory() -> list:
                 "wt_out":     0.0,
                 "qty_in":     0,
                 "qty_out":    0,
+                "_locations": set(),
                 "location":   "",
                 "last_date":  "",
             }
@@ -79,7 +80,7 @@ def get_inventory() -> list:
             g["wt_in"]  += e.get("net_wt",  0.0)
             g["qty_in"] += e.get("qty_in",   0)
             if e.get("location"):
-                g["location"] = e.get("location")
+                g["_locations"].add(e.get("location"))
         else:
             g["wt_out"]  += e.get("out_net_wt", 0.0)
             g["qty_out"] += e.get("qty_out",     0)
@@ -89,6 +90,7 @@ def get_inventory() -> list:
 
     result = []
     for g in groups.values():
+        g["location"]    = ", ".join(sorted(g.pop("_locations")))
         g["current_wt"]  = round(g["wt_in"] - g["wt_out"], 3)
         g["current_qty"] = g["qty_in"] - g["qty_out"]
         result.append(g)

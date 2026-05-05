@@ -24,7 +24,10 @@ def change_credentials(current_password: str, new_username: str, new_password: s
     Change login credentials.
     Returns (success: bool, message: str).
     """
-    stored_user, stored_pass = _get_credentials()
+    data = safe_read(SETTINGS_FILE)
+    if not isinstance(data, dict):
+        data = {}
+    stored_pass = data.get("password", ADMIN_PASSWORD)
     if current_password != stored_pass:
         return False, "Current password is incorrect."
 
@@ -34,9 +37,6 @@ def change_credentials(current_password: str, new_username: str, new_password: s
     if not new_password:
         return False, "New password cannot be empty."
 
-    data = safe_read(SETTINGS_FILE)
-    if not isinstance(data, dict):
-        data = {}
     data["username"] = new_username
     data["password"] = new_password
 

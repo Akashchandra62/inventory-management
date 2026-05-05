@@ -12,7 +12,6 @@ class InvoiceItem:
     rate: float = 0.0
     making_charge: float = 0.0
     stone_charge: float = 0.0
-    tax_percent: float = 0.0
     discount: float = 0.0
     total: float = 0.0
 
@@ -21,12 +20,6 @@ class InvoiceItem:
     @classmethod
     def from_dict(cls, d: dict):
         return cls(**{k: v for k, v in d.items() if k in cls.__dataclass_fields__})
-
-    def calculate_total(self):
-        base = (self.rate * self.weight) + self.making_charge + self.stone_charge
-        tax_amt = base * (self.tax_percent / 100)
-        self.total = round(base + tax_amt - self.discount, 2)
-        return self.total
 
 
 @dataclass
@@ -38,6 +31,7 @@ class InvoiceModel:
     customer_name: str = ""
     customer_mobile: str = ""
     customer_address: str = ""
+    customer_email: str = ""
     items: List[dict] = field(default_factory=list)
     subtotal: float = 0.0
     tax_percent: float = 0.0

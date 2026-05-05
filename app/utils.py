@@ -7,12 +7,6 @@ import uuid
 from datetime import datetime
 
 
-def generate_invoice_number(prefix: str, last_number: int) -> str:
-    """Generate next invoice number like JB-0042."""
-    next_num = last_number + 1
-    return f"{prefix}-{next_num:04d}", next_num
-
-
 def current_datetime_str() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 

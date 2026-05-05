@@ -9,7 +9,7 @@ from PyQt5.QtWidgets import (
     QHeaderView, QAbstractItemView, QMessageBox,
     QScrollArea, QComboBox,
 )
-from PyQt5.QtCore import Qt, QDate
+from PyQt5.QtCore import Qt, QDate, pyqtSignal
 from PyQt5.QtGui import QFont, QColor
 from services.invoice_service import get_all_invoices
 from services.metal_service import get_metals
@@ -65,7 +65,8 @@ def _build_inv_row(inv: dict, catalog_metal_map: dict) -> dict:
         "date":            inv.get("date", ""),
         "customer_name":   inv.get("customer_name", ""),
         "gross_sale":      float(inv.get("subtotal",      0) or 0),
-        "discount":        float(inv.get("round_off",     0) or 0),
+        "discount":        sum(float(it.get("discount", 0)) for it in inv.get("items", [])),
+        "round_off":       float(inv.get("round_off",     0) or 0),
         "sale_amount":     float(inv.get("grand_total",   0) or 0),
         "cgst":            float(inv.get("cgst_amount",   0) or 0),
         "sgst":            float(inv.get("sgst_amount",   0) or 0),
@@ -83,6 +84,9 @@ def _build_inv_row(inv: dict, catalog_metal_map: dict) -> dict:
 
 
 class SalesReportPage(QWidget):
+    edit_invoice_requested      = pyqtSignal(dict)
+    duplicate_invoice_requested = pyqtSignal(dict)
+
     def __init__(self, history_mode: bool = False):
         super().__init__()
         self.history_mode           = history_mode
@@ -297,7 +301,33 @@ class SalesReportPage(QWidget):
         root.addWidget(self.tbl)
 
         # ── Action buttons ────────────────────────────────────
-        act = QHBoxLayout(); act.addStretch()
+        act = QHBoxLayout()
+
+        # Row-selection actions (left side, enabled when a row is selected)
+        self._btn_edit_inv = QPushButton("✏️  Edit Invoice")
+        self._btn_edit_inv.setEnabled(False)
+        self._btn_edit_inv.setStyleSheet(
+            "QPushButton{background:#2980b9;color:white;border-radius:4px;"
+            "padding:8px 16px;font-weight:bold;}"
+            "QPushButton:hover{background:#2471a3;}"
+            "QPushButton:disabled{background:#bdc3c7;color:#7f8c8d;}"
+        )
+        self._btn_edit_inv.clicked.connect(self._edit_selected)
+
+        self._btn_dup_inv = QPushButton("📋  Duplicate")
+        self._btn_dup_inv.setEnabled(False)
+        self._btn_dup_inv.setStyleSheet(
+            "QPushButton{background:#8e44ad;color:white;border-radius:4px;"
+            "padding:8px 16px;font-weight:bold;}"
+            "QPushButton:hover{background:#7d3c98;}"
+            "QPushButton:disabled{background:#bdc3c7;color:#7f8c8d;}"
+        )
+        self._btn_dup_inv.clicked.connect(self._duplicate_selected)
+
+        act.addWidget(self._btn_edit_inv)
+        act.addWidget(self._btn_dup_inv)
+        act.addStretch()
+
         for label, color, hover, slot in [
             ("Print / PDF",  "#f39c12", "#e67e22", self._reprint),
             ("Export Excel", "#1e8449", "#196f3d", self._export_excel),
@@ -309,6 +339,9 @@ class SalesReportPage(QWidget):
                 f"QPushButton:hover{{background:{hover};}}")
             b.clicked.connect(slot); act.addWidget(b)
         root.addLayout(act)
+
+        # Enable/disable row-selection buttons when selection changes
+        self.tbl.itemSelectionChanged.connect(self._on_selection_changed)
 
     # ─────────────────────────────────────────────────────────
     #  Quick date presets
@@ -500,6 +533,8 @@ class SalesReportPage(QWidget):
     # ─────────────────────────────────────────────────────────
     def _populate(self, rows: list):
         self.tbl.setRowCount(0)
+        self._btn_edit_inv.setEnabled(False)
+        self._btn_dup_inv.setEnabled(False)
         t_gross = t_disc = t_sale = t_cgst = t_sgst = 0.0
         t_other = t_adv  = t_cash = t_card = 0.0
         t_cheque = t_dues = t_upi = 0.0
@@ -565,13 +600,32 @@ class SalesReportPage(QWidget):
     # ─────────────────────────────────────────────────────────
     def _open_detail(self, inv: dict):
         from ui.invoice_detail_dialog import InvoiceDetailDialog
-        dlg = InvoiceDetailDialog(inv, self)
+        dlg = InvoiceDetailDialog(
+            inv, self,
+            on_edit=lambda i: self.edit_invoice_requested.emit(i),
+            on_duplicate=lambda i: self.duplicate_invoice_requested.emit(i),
+        )
         dlg.exec()
 
     def _view_invoice(self):
         row = self.tbl.currentRow()
         if 0 <= row < len(self._flat_rows):
             self._open_detail(self._flat_rows[row]["_inv"])
+
+    def _on_selection_changed(self):
+        has_row = 0 <= self.tbl.currentRow() < len(self._flat_rows)
+        self._btn_edit_inv.setEnabled(has_row)
+        self._btn_dup_inv.setEnabled(has_row)
+
+    def _edit_selected(self):
+        row = self.tbl.currentRow()
+        if 0 <= row < len(self._flat_rows):
+            self.edit_invoice_requested.emit(self._flat_rows[row]["_inv"])
+
+    def _duplicate_selected(self):
+        row = self.tbl.currentRow()
+        if 0 <= row < len(self._flat_rows):
+            self.duplicate_invoice_requested.emit(self._flat_rows[row]["_inv"])
 
     def _reprint(self):
         row = self.tbl.currentRow()

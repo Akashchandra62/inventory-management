@@ -61,6 +61,18 @@ def reduce_stock(item_name: str, quantity: int, purity: str = "") -> bool:
     return False
 
 
+def restore_stock(item_name: str, quantity: int, purity: str = "") -> bool:
+    """Increase stock quantity (reverse of reduce_stock) — used when an invoice is edited."""
+    stock = get_all_stock()
+    for s in stock:
+        name_match   = s.get("item_name", "").lower() == item_name.lower()
+        purity_match = not purity or s.get("purity", "").lower() == purity.lower()
+        if name_match and purity_match:
+            s["quantity"] = s.get("quantity", 0) + quantity
+            return save_all_stock(stock)
+    return False
+
+
 def get_low_stock(threshold: float = 2, column: str = "quantity") -> list:
     col_map = {
         "quantity":     "quantity",

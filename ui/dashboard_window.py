@@ -283,6 +283,17 @@ class DashboardWindow(QMainWindow):
         root.addWidget(self._stack)
         self._switch_page("home")
 
+        # Wire invoice edit / duplicate from both SalesReport page instances
+        inv_page = self._pages["invoice"]
+        for key in ("sales_report", "invoice_history"):
+            p = self._pages[key]
+            p.edit_invoice_requested.connect(
+                lambda inv, ip=inv_page: self._open_invoice_for_edit(inv, ip)
+            )
+            p.duplicate_invoice_requested.connect(
+                lambda inv, ip=inv_page: self._open_invoice_for_duplicate(inv, ip)
+            )
+
     _NAV_BTN_EXPANDED = """
         QPushButton {
             background: transparent; color: #ecf0f1; border: none;
@@ -396,6 +407,14 @@ class DashboardWindow(QMainWindow):
             self._gem.setPixmap(pix)
         else:
             self._gem.setPixmap(_gem_pixmap(44))
+
+    def _open_invoice_for_edit(self, inv: dict, inv_page):
+        inv_page.load_for_edit(inv)
+        self._switch_page("invoice")
+
+    def _open_invoice_for_duplicate(self, inv: dict, inv_page):
+        inv_page.load_for_duplicate(inv)
+        self._switch_page("invoice")
 
     def showEvent(self, event):
         super().showEvent(event)

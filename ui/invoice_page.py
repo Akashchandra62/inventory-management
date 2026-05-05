@@ -7,14 +7,16 @@ from PyQt5.QtWidgets import (
     QPushButton, QTableWidget, QTableWidgetItem, QMessageBox,
     QGroupBox, QFormLayout, QDoubleSpinBox, QSpinBox,
     QComboBox, QFrame, QScrollArea, QHeaderView, QAbstractItemView,
-    QCompleter, QAbstractSpinBox, QDialog
+    QCompleter, QAbstractSpinBox, QDialog, QDateEdit
 )
-from PyQt5.QtCore import Qt, QEvent, QTimer
+from PyQt5.QtCore import Qt, QEvent, QTimer, QDate
 from PyQt5.QtGui import QFont, QDoubleValidator
+from PyQt5.QtWidgets import QShortcut
+from PyQt5.QtGui import QKeySequence
 from app.config import AppConfig
 from app.utils import format_currency
 from app.printer_helper import save_invoice_as_pdf
-from services.invoice_service import create_invoice
+from services.invoice_service import create_invoice, update_invoice
 from services.customer_service import get_all_customers
 from services.item_catalog_service import (
     get_item_by_code, get_item_by_name, get_names as get_catalog_names, add_catalog_item
@@ -31,6 +33,9 @@ class InvoicePage(QWidget):
         self._items: list[dict] = []
         self._last_invoice: dict = {}
         self._grand_total: float = 0.0
+        self._edit_mode: bool = False
+        self._editing_invoice_id: str = ""
+        self._editing_invoice_number: str = ""
         self._build_ui()
 
     def _build_ui(self):
@@ -40,10 +45,23 @@ class InvoicePage(QWidget):
 
         # Title bar
         top = QHBoxLayout()
-        title = QLabel("🧾  New Invoice")
-        title.setFont(QFont("Segoe UI", 13, QFont.Bold))
+        self._title_lbl = QLabel("🧾  New Invoice")
+        self._title_lbl.setFont(QFont("Segoe UI", 13, QFont.Bold))
         self._inv_num_lbl = QLabel()
         self._inv_num_lbl.setStyleSheet("color: #f39c12; font-size: 12px; font-weight: bold;")
+
+        # Invoice date — defaults to today, editable (supports back-dating)
+        _date_lbl = QLabel("Date:")
+        _date_lbl.setStyleSheet("color:#555; font-size:11px; font-weight:600;")
+        self.dte_invoice = QDateEdit(QDate.currentDate())
+        self.dte_invoice.setCalendarPopup(True)
+        self.dte_invoice.setDisplayFormat("dd-MM-yyyy")
+        self.dte_invoice.setMinimumHeight(26)
+        self.dte_invoice.setMaximumWidth(130)
+        self.dte_invoice.setStyleSheet(
+            "QDateEdit{border:1px solid #ced4da;border-radius:4px;padding:1px 6px;font-size:12px;}"
+            "QDateEdit:focus{border:2px solid #3498db;background:#eaf6fd;}"
+        )
 
         btn_clear = QPushButton("🔄  New / Clear")
         btn_clear.setStyleSheet(
@@ -52,10 +70,13 @@ class InvoicePage(QWidget):
         )
         btn_clear.clicked.connect(self._clear_all)
 
-        top.addWidget(title)
+        top.addWidget(self._title_lbl)
         top.addStretch()
         top.addWidget(self._inv_num_lbl)
         top.addSpacing(12)
+        top.addWidget(_date_lbl)
+        top.addWidget(self.dte_invoice)
+        top.addSpacing(8)
         top.addWidget(btn_clear)
         root.addLayout(top)
 
@@ -325,9 +346,16 @@ class InvoicePage(QWidget):
         totals_frame.setStyleSheet(
             "QFrame { background:white; border:1px solid #e0e0e0; border-radius:6px; padding:6px; }"
         )
-        tfl = QFormLayout(totals_frame)
+        # Outer VBox: form rows on top, stretch, hint pinned to bottom
+        _totals_vbox = QVBoxLayout(totals_frame)
+        _totals_vbox.setContentsMargins(0, 0, 0, 0)
+        _totals_vbox.setSpacing(0)
+
+        _tax_form_w = QWidget(); _tax_form_w.setStyleSheet("background:transparent;")
+        tfl = QFormLayout(_tax_form_w)
         tfl.setLabelAlignment(Qt.AlignRight)
         tfl.setSpacing(5)
+        tfl.setContentsMargins(6, 6, 6, 4)
         tfl.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
 
         def _tax_spn(default=0.0):
@@ -392,6 +420,27 @@ class InvoicePage(QWidget):
         tfl.addRow("IGST:",  _tax_row_widget(self.spn_igst, self.lbl_igst_amt))
         tfl.addRow("NET PAYABLE:", self.lbl_grand)
 
+        _totals_vbox.addWidget(_tax_form_w)
+        _totals_vbox.addStretch()
+
+        # Info hint — pinned to the bottom of the totals card
+        _igst_hint = QLabel("  ⌨  Ctrl+G  —  Edit IGST")
+        _igst_hint.setAlignment(Qt.AlignCenter)
+        _igst_hint.setFixedHeight(26)
+        _igst_hint.setStyleSheet(
+            "background:#eaf4fb;"
+            "color:#1a5276;"
+            "border:1px solid #aed6f1;"
+            "border-radius:4px;"
+            "font-size:11px;"
+            "font-weight:600;"
+            "padding:0 6px;"
+            "margin:0 6px 6px 6px;"
+        )
+        _igst_hint.setCursor(Qt.PointingHandCursor)
+        _igst_hint.mousePressEvent = lambda _: self._focus_igst()
+        _totals_vbox.addWidget(_igst_hint)
+
         bottom.addWidget(totals_frame, 2)
 
         root.addLayout(bottom)
@@ -415,27 +464,36 @@ class InvoicePage(QWidget):
         )
         btn_preview.clicked.connect(self._preview_invoice)
 
-        btn_save = QPushButton("💾  Save Invoice")
-        btn_save.setStyleSheet(
+        self._btn_save = QPushButton("💾  Save Invoice")
+        self._btn_save.setStyleSheet(
             "QPushButton { background:#2980b9; color:white; border-radius:5px; padding:6px 14px; font-weight:bold; }"
             "QPushButton:hover { background:#2471a3; }"
         )
-        btn_save.clicked.connect(self._save_invoice)
+        self._btn_save.clicked.connect(self._save_invoice)
 
-        btn_print = QPushButton("🖨  Save && Print PDF")
-        btn_print.setStyleSheet(
+        self._btn_print = QPushButton("🖨  Save && Print PDF")
+        self._btn_print.setStyleSheet(
             "QPushButton { background:#f39c12; color:white; border-radius:5px; padding:6px 14px; font-weight:bold; }"
             "QPushButton:hover { background:#e67e22; }"
         )
-        btn_print.clicked.connect(self._save_and_print)
+        self._btn_print.clicked.connect(self._save_and_print)
 
         act_row.addStretch()
         act_row.addWidget(btn_preview)
-        act_row.addWidget(btn_save)
-        act_row.addWidget(btn_print)
+        act_row.addWidget(self._btn_save)
+        act_row.addWidget(self._btn_print)
         root.addLayout(act_row)
 
+        # Ctrl+G → jump to IGST spinner
+        _igst_sc = QShortcut(QKeySequence("Ctrl+G"), self)
+        _igst_sc.setContext(Qt.WidgetWithChildrenShortcut)
+        _igst_sc.activated.connect(self._focus_igst)
+
         self._refresh_inv_number()
+
+    def _focus_igst(self):
+        self.spn_igst.setFocus()
+        self.spn_igst.selectAll()
 
     # ── Customer Autocomplete ─────────────────────────────────
     def _setup_customer_autocomplete(self):
@@ -827,17 +885,34 @@ class InvoicePage(QWidget):
         self._recalc_due()
 
     def _recalc_due(self, *_):
-        """Due = (Grand Total − Round Off) − all payments. Also updates NET PAYABLE label."""
+        """Recalculate due/refund when payment amounts change.
+
+        balance = net_payable - total_paid
+          balance > 0  →  customer still owes (due amount)
+          balance < 0  →  overpaid, auto-fill refund field
+          balance = 0  →  fully settled
+        """
         def _v(le):
             try: return float(le.text())
             except ValueError: return 0.0
         round_off = _v(self.txt_roundoff)
         paid = (_v(self.txt_cash) + _v(self.txt_card) + _v(self.txt_cheque) + _v(self.txt_upi)
                 + _v(self.txt_old_purchase) + _v(self.txt_advance))
-        net = max(0.0, getattr(self, '_grand_total', 0.0) - round_off)
-        due = round(max(0.0, net - paid), 2)
+        net     = max(0.0, getattr(self, '_grand_total', 0.0) - round_off)
+        balance = round(net - paid, 2)
+
         self.lbl_grand.setText(format_currency(net))
-        self.txt_due.setText(f"{due:.2f}")
+
+        if balance >= 0:
+            self.txt_due.setText(f"{balance:.2f}")
+            self.txt_refund.blockSignals(True)
+            self.txt_refund.clear()
+            self.txt_refund.blockSignals(False)
+        else:
+            self.txt_due.setText("0.00")
+            self.txt_refund.blockSignals(True)
+            self.txt_refund.setText(f"{abs(balance):.2f}")
+            self.txt_refund.blockSignals(False)
 
     def _auto_roundoff(self):
         """Fill round-off with the decimal fraction of the current grand total."""
@@ -870,6 +945,7 @@ class InvoicePage(QWidget):
         grand    = round(subtotal + cgst_amt + sgst_amt + igst_amt, 2)
 
         return {
+            "invoice_date":     self.dte_invoice.date().toString("yyyy-MM-dd"),
             "customer_name":    self.txt_cname.text().strip(),
             "customer_mobile":  self.txt_cmobile.text().strip(),
             "customer_email":   self.txt_cemail.text().strip(),
@@ -916,8 +992,12 @@ class InvoicePage(QWidget):
         preview_data = self._build_invoice_data()
         prefix = AppConfig.invoice_prefix()
         last   = AppConfig.last_invoice_number()
-        preview_data.setdefault("invoice_number", f"{prefix}-{last + 1:04d} (Preview)")
-        preview_data.setdefault("date", date.today().strftime("%Y-%m-%d"))
+        if self._edit_mode:
+            preview_data.setdefault("invoice_number", self._editing_invoice_number)
+        else:
+            preview_data.setdefault("invoice_number", f"{prefix}-{last + 1:04d} (Preview)")
+        # Use the date from the date picker; fall back to today
+        preview_data["date"] = preview_data.get("invoice_date") or date.today().strftime("%Y-%m-%d")
 
         try:
             os.makedirs(INVOICES_PRINT, exist_ok=True)
@@ -932,31 +1012,62 @@ class InvoicePage(QWidget):
         if not self._validate():
             return
         extra = self._build_invoice_data()
-        inv = create_invoice(
-            extra["customer_name"], extra["customer_mobile"],
-            extra["customer_address"], list(self._items),
-            extra["tax_percent"], notes=extra.get("notes", ""),
-            customer_email=extra.get("customer_email", ""),
-            extra=extra,
-        )
+
+        if self._edit_mode:
+            inv = self._do_update(extra)
+            if inv is None:
+                return
+            QMessageBox.information(self, "Updated", f"Invoice {inv['invoice_number']} updated!")
+        else:
+            inv = create_invoice(
+                extra["customer_name"], extra["customer_mobile"],
+                extra["customer_address"], list(self._items),
+                extra["tax_percent"], notes=extra.get("notes", ""),
+                customer_email=extra.get("customer_email", ""),
+                extra=extra,
+                invoice_date=extra.get("invoice_date", ""),
+            )
+            QMessageBox.information(self, "Saved", f"Invoice {inv['invoice_number']} saved!")
+
         self._last_invoice = inv
-        QMessageBox.information(self, "Saved", f"Invoice {inv['invoice_number']} saved!")
         self._clear_all()
 
     def _save_and_print(self):
         if not self._validate():
             return
         extra = self._build_invoice_data()
-        inv = create_invoice(
-            extra["customer_name"], extra["customer_mobile"],
-            extra["customer_address"], list(self._items),
-            extra["tax_percent"], notes=extra.get("notes", ""),
-            customer_email=extra.get("customer_email", ""),
-            extra=extra,
-        )
+
+        if self._edit_mode:
+            inv = self._do_update(extra)
+            if inv is None:
+                return
+        else:
+            inv = create_invoice(
+                extra["customer_name"], extra["customer_mobile"],
+                extra["customer_address"], list(self._items),
+                extra["tax_percent"], notes=extra.get("notes", ""),
+                customer_email=extra.get("customer_email", ""),
+                extra=extra,
+                invoice_date=extra.get("invoice_date", ""),
+            )
+
         self._last_invoice = inv
         self._clear_all()
         save_invoice_as_pdf(inv, parent=self)
+
+    def _do_update(self, extra: dict):
+        """Overwrite the existing invoice record in storage. Returns updated dict or None on failure."""
+        from datetime import datetime
+        updated = dict(extra)
+        updated["invoice_id"]     = self._editing_invoice_id
+        updated["invoice_number"] = self._editing_invoice_number
+        updated["date"]           = extra.get("invoice_date", "")
+        updated["time"]           = datetime.now().strftime("%H:%M:%S")
+        updated["customer_email"] = extra.get("customer_email", "")
+        if not update_invoice(self._editing_invoice_id, updated):
+            QMessageBox.critical(self, "Error", "Failed to update invoice.")
+            return None
+        return updated
 
     # ── Quick-Add helpers ─────────────────────────────────────
 
@@ -1246,6 +1357,15 @@ class InvoicePage(QWidget):
             )
 
     def _clear_all(self):
+        # Reset edit-mode state
+        self._edit_mode = False
+        self._editing_invoice_id = ""
+        self._editing_invoice_number = ""
+        self._title_lbl.setText("🧾  New Invoice")
+        self._btn_save.setText("💾  Save Invoice")
+        self._btn_print.setText("🖨  Save && Print PDF")
+
+        self.dte_invoice.setDate(QDate.currentDate())
         self.txt_cname.clear()
         self.txt_cmobile.clear()
         self.txt_cemail.clear()
@@ -1269,6 +1389,153 @@ class InvoicePage(QWidget):
         self.spn_igst.setValue(0.0)
         self._recalc_totals()
         self._refresh_inv_number()
+
+    # ── Load saved invoice data ───────────────────────────────
+
+    def load_for_edit(self, inv: dict):
+        """Load a saved invoice into the form for editing in-place."""
+        self._clear_all()
+        self._edit_mode = True
+        self._editing_invoice_id     = inv.get("invoice_id", "")
+        self._editing_invoice_number = inv.get("invoice_number", "")
+        inv_no = self._editing_invoice_number
+        self._title_lbl.setText(f"✏️  Edit Invoice  —  {inv_no}")
+        self._inv_num_lbl.setText(f"Editing: {inv_no}")
+        self._btn_save.setText("💾  Update Invoice")
+        self._btn_print.setText("🖨  Update && Print PDF")
+        self._load_invoice_data(inv)
+
+    def load_for_duplicate(self, inv: dict):
+        """Pre-fill the form from a saved invoice as a starting point for a new invoice."""
+        self._clear_all()
+        self._load_invoice_data(inv)
+        self._title_lbl.setText("🧾  New Invoice  (from copy)")
+
+    def _load_invoice_data(self, inv: dict):
+        """Populate all form fields from a saved invoice dict."""
+        # Date
+        date_str = inv.get("date", "")
+        if date_str:
+            qd = QDate.fromString(date_str, "yyyy-MM-dd")
+            if qd.isValid():
+                self.dte_invoice.setDate(qd)
+
+        # Customer
+        self.txt_cmobile.setText(inv.get("customer_mobile", ""))
+        self.txt_cname.setText(inv.get("customer_name", ""))
+        self.txt_caddr.setText(inv.get("customer_address", ""))
+        self.txt_cemail.setText(inv.get("customer_email", ""))
+        self.txt_cust_gst.setText(inv.get("customer_gst", ""))
+        self.txt_aadhaar.setText(inv.get("customer_aadhaar", ""))
+        self.txt_pan.setText(inv.get("customer_pan", ""))
+
+        # Items
+        self._reset_items_table()
+        items = inv.get("items", [])
+        for idx, item in enumerate(items):
+            if idx > 0:
+                self._append_item_row()
+            rd = self._row_widgets[idx]
+
+            rd['tag'].setText(item.get("tag", ""))
+            rd['name'].setText(item.get("name", ""))
+            rd['huid'].setText(item.get("huid", ""))
+
+            purity = item.get("purity", "")
+            if purity:
+                pi = rd['purity'].findText(purity)
+                if pi >= 0:
+                    rd['purity'].setCurrentIndex(pi)
+                else:
+                    rd['purity'].setCurrentText(purity)
+
+            rd['gwt'].blockSignals(True)
+            rd['lwt'].blockSignals(True)
+            rd['nwt'].blockSignals(True)
+            rd['gwt'].setValue(float(item.get("weight",      0)))
+            rd['lwt'].setValue(float(item.get("less_weight", 0)))
+            rd['nwt'].setValue(float(item.get("nett_weight", 0)))
+            rd['gwt'].blockSignals(False)
+            rd['lwt'].blockSignals(False)
+            rd['nwt'].blockSignals(False)
+
+            rd['qty'].setValue(int(item.get("quantity", 1)))
+            rd['rate'].setValue(float(item.get("rate", 0)))
+
+            making_pct = float(item.get("making_pct",    0))
+            making_amt = float(item.get("making_charge", 0))
+            if making_pct > 0 or making_amt == 0:
+                rd['mk_is_pct'][0] = True
+                rd['mk_btn'].setText('%')
+                rd['mk_btn'].setStyleSheet(
+                    "QPushButton{background:#8e44ad;color:white;border-radius:3px;"
+                    "font-weight:bold;font-size:10px;border:none;}"
+                    "QPushButton:hover{background:#7d3c98;}"
+                )
+                rd['mk_spn'].setSuffix(' %')
+                rd['mk_spn'].setPrefix('')
+                rd['mk_spn'].setRange(0, 100)
+                rd['mk_spn'].setValue(making_pct)
+            else:
+                rd['mk_is_pct'][0] = False
+                rd['mk_btn'].setText('₹')
+                rd['mk_btn'].setStyleSheet(
+                    "QPushButton{background:#d35400;color:white;border-radius:3px;"
+                    "font-weight:bold;font-size:10px;border:none;}"
+                    "QPushButton:hover{background:#b7490a;}"
+                )
+                rd['mk_spn'].setSuffix('')
+                rd['mk_spn'].setPrefix('₹')
+                rd['mk_spn'].setRange(0, 9999999)
+                rd['mk_spn'].setValue(making_amt)
+
+            rd['other'].setValue(float(item.get("stone_charge", 0)))
+            self._row_calc(rd)
+
+        # Tax
+        self.spn_cgst.setValue(float(inv.get("cgst_percent", 1.5)))
+        self.spn_sgst.setValue(float(inv.get("sgst_percent", 1.5)))
+        self.spn_igst.setValue(float(inv.get("igst_percent", 0.0)))
+
+        self._rebuild_items_from_table()
+
+        # Payment fields — restore after recalc (recalc may auto-set refund/due)
+        def _set_money(field, key):
+            val = float(inv.get(key, 0) or 0)
+            field.setText(f"{val:.2f}" if val else "")
+
+        _set_money(self.txt_cash,          "cash_paid")
+        _set_money(self.txt_card,          "card_paid")
+        _set_money(self.txt_cheque,        "cheque_paid")
+        _set_money(self.txt_upi,           "upi_paid")
+        _set_money(self.txt_old_purchase,  "old_purchase")
+        _set_money(self.txt_advance,       "advance_paid")
+        _set_money(self.txt_roundoff,      "round_off")
+
+        self.txt_card_details.setText(inv.get("card_details", ""))
+        self.txt_cheque_details.setText(inv.get("cheque_details", ""))
+
+        # Trigger recalc after restoring payment fields so due/refund updates
+        self._recalc_due()
+
+        # Override auto-calculated refund/due with saved values
+        refund_val = float(inv.get("refund_amount", 0) or 0)
+        due_val    = float(inv.get("due_amount",    0) or 0)
+        if refund_val:
+            self.txt_refund.blockSignals(True)
+            self.txt_refund.setText(f"{refund_val:.2f}")
+            self.txt_refund.blockSignals(False)
+        if due_val:
+            self.txt_due.setText(f"{due_val:.2f}")
+
+        refund_mode = inv.get("refund_mode", "Cash")
+        idx = self.cmb_refund_mode.findText(refund_mode)
+        if idx >= 0:
+            self.cmb_refund_mode.setCurrentIndex(idx)
+
+        self.txt_due_date.setText(inv.get("due_date", ""))
+        self.txt_remarks.setText(inv.get("remarks", ""))
+        self.txt_notes.setText(inv.get("notes", ""))
 
     def refresh(self):
         self._refresh_inv_number()

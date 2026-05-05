@@ -78,7 +78,7 @@ class StockReportPage(QWidget):
         self.dt_to.setFixedHeight(30)
         row1.addWidget(self.dt_to)
 
-        btn_apply = QPushButton("Apply Date")
+        btn_apply = QPushButton("Apply Date Range")
         btn_apply.setFixedHeight(30)
         btn_apply.setStyleSheet(
             "QPushButton{background:#2980b9;color:white;border-radius:4px;"
@@ -87,6 +87,16 @@ class StockReportPage(QWidget):
         )
         btn_apply.clicked.connect(self._apply_with_dates)
         row1.addWidget(btn_apply)
+
+        btn_from_start = QPushButton("From Start")
+        btn_from_start.setFixedHeight(30)
+        btn_from_start.setStyleSheet(
+            "QPushButton{background:#8e44ad;color:white;border-radius:4px;"
+            "padding:2px 12px;font-size:11px;border:none;}"
+            "QPushButton:hover{background:#7d3c98;}"
+        )
+        btn_from_start.clicked.connect(self._apply_from_start)
+        row1.addWidget(btn_from_start)
 
         btn_all = QPushButton("All Dates")
         btn_all.setFixedHeight(30)
@@ -125,14 +135,6 @@ class StockReportPage(QWidget):
         self.txt_item.setMinimumWidth(150)
         self.txt_item.textChanged.connect(self._refilter)
         row2.addWidget(self.txt_item)
-
-        row2.addWidget(self._lbl("Type:"))
-        self.cmb_type = QComboBox()
-        self.cmb_type.addItems(["All", "IN", "OUT"])
-        self.cmb_type.setFixedHeight(30)
-        self.cmb_type.setMinimumWidth(72)
-        self.cmb_type.currentTextChanged.connect(self._refilter)
-        row2.addWidget(self.cmb_type)
 
         row2.addStretch()
         fv.addLayout(row2)
@@ -196,8 +198,8 @@ class StockReportPage(QWidget):
         act.addWidget(btn_exp)
         root.addLayout(act)
 
-        # State: whether a date range is active
-        self._date_active = False
+        # State: "all" | "range" | "from_start"
+        self._date_mode = "all"
 
     # ──────────────────────────────────────────────────────
     #  Helpers
@@ -237,11 +239,15 @@ class StockReportPage(QWidget):
     #  Button actions
     # ──────────────────────────────────────────────────────
     def _apply_with_dates(self):
-        self._date_active = True
+        self._date_mode = "range"
+        self._compute_and_display()
+
+    def _apply_from_start(self):
+        self._date_mode = "from_start"
         self._compute_and_display()
 
     def _apply_all_dates(self):
-        self._date_active = False
+        self._date_mode = "all"
         self._compute_and_display()
 
     def _refilter(self):
@@ -251,33 +257,50 @@ class StockReportPage(QWidget):
     # ──────────────────────────────────────────────────────
     #  Core computation
     # ──────────────────────────────────────────────────────
+    @staticmethod
+    def _is_invoice_out(e: dict) -> bool:
+        """True when the OUT entry was auto-created by an invoice sale."""
+        src = e.get("source", "")
+        if src == "invoice":
+            return True
+        if src:
+            return False
+        # Legacy entries have no "source" field.
+        # Only treat as invoice OUT if voucher_no looks like an invoice number
+        # (starts with the shop prefix pattern, e.g. "JB-", "INV-").
+        # Default to manual (False) for ambiguous cases to avoid overstating sales.
+        vno = e.get("voucher_no", "").upper()
+        return bool(vno) and not vno.startswith("VCH-") and "-" in vno and not vno.startswith("ADJ-")
+
     def _compute_and_display(self):
-        from_str = (self.dt_from.date().toString("yyyy-MM-dd")
-                    if self._date_active else "")
-        to_str   = (self.dt_to.date().toString("yyyy-MM-dd")
-                    if self._date_active else "")
+        if self._date_mode == "range":
+            from_str = self.dt_from.date().toString("yyyy-MM-dd")
+            to_str   = self.dt_to.date().toString("yyyy-MM-dd")
+        elif self._date_mode == "from_start":
+            from_str = ""
+            to_str   = self.dt_to.date().toString("yyyy-MM-dd")
+        else:  # "all"
+            from_str = ""
+            to_str   = ""
 
         metal  = self.cmb_metal.currentText()
         purity = self.cmb_purity.currentText()
         item_q = self.txt_item.text().strip().lower()
-        type_f = self.cmb_type.currentText()
 
         # Bucket entries
-        before: list[dict] = []   # contributes to O. A/c
-        period: list[dict] = []   # contributes to Wt In / Wt Out
+        before: list[dict] = []   # before range → contributes to O. A/c
+        period: list[dict] = []   # within range → contributes to Wt In / Wt Out
 
         for e in self._entries:
-            # Item-level filters
-            if metal  != "All" and e.get("metal_type","") != metal:           continue
-            if purity != "All" and e.get("purity","")     != purity:          continue
-            if item_q and item_q not in e.get("item_name","").lower():         continue
-            if type_f != "All" and e.get("entry_type","") != type_f:          continue
+            if metal  != "All" and e.get("metal_type","") != metal:            continue
+            if purity != "All" and e.get("purity","")     != purity:           continue
+            if item_q and item_q not in e.get("item_name","").lower():          continue
 
             d = e.get("voucher_date","")
             if from_str and d < from_str:
                 before.append(e)
             elif to_str and d > to_str:
-                pass   # outside range — ignore
+                pass
             else:
                 period.append(e)
 
@@ -289,34 +312,43 @@ class StockReportPage(QWidget):
             if key not in groups:
                 groups[key] = {
                     "item_name": key[0], "purity": key[1],
-                    "open_wt": 0.0, "open_pcs": 0,
-                    "wt_in":   0.0, "in_pcs":   0,
-                    "wt_out":  0.0, "out_pcs":  0,
+                    "open_wt":  0.0, "open_pcs": 0,
+                    "wt_in":    0.0, "in_pcs":   0,
+                    "wt_out":   0.0, "out_pcs":  0,
+                    "adj_wt":   0.0, "adj_pcs":  0,
                 }
             return groups[key]
 
         for e in before:
             g = _get(e)
             if e.get("entry_type") == "IN":
-                g["open_wt"]  += e.get("net_wt",      0.0)
+                g["open_wt"]  += e.get("net_wt",     0.0)
                 g["open_pcs"] += e.get("qty_in",       0)
             else:
+                # Both invoice and manual OUTs reduce the opening balance
                 g["open_wt"]  -= e.get("out_net_wt",  0.0)
-                g["open_pcs"] -= e.get("qty_out",      0)
+                g["open_pcs"] -= e.get("qty_out",       0)
 
         for e in period:
             g = _get(e)
             if e.get("entry_type") == "IN":
                 g["wt_in"]  += e.get("net_wt",     0.0)
                 g["in_pcs"] += e.get("qty_in",      0)
-            else:
+            elif self._is_invoice_out(e):
+                # Invoice sale → visible in Wt Out / Out Pcs columns
                 g["wt_out"]  += e.get("out_net_wt", 0.0)
                 g["out_pcs"] += e.get("qty_out",    0)
+            else:
+                # Manual stock correction → silently reduces closing stock
+                g["adj_wt"]  += e.get("out_net_wt", 0.0)
+                g["adj_pcs"] += e.get("qty_out",    0)
 
         result = []
         for g in groups.values():
-            g["closing_wt"]  = round(g["open_wt"] + g["wt_in"] - g["wt_out"], 3)
-            g["stock_pcs"]   = g["open_pcs"] + g["in_pcs"] - g["out_pcs"]
+            g["closing_wt"] = round(
+                g["open_wt"] + g["wt_in"] - g["wt_out"] - g["adj_wt"], 3
+            )
+            g["stock_pcs"]  = g["open_pcs"] + g["in_pcs"] - g["out_pcs"] - g["adj_pcs"]
             result.append(g)
 
         result.sort(key=lambda x: x.get("item_name","").lower())

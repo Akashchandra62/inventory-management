@@ -27,7 +27,8 @@ CUSTOMERS_FILE      = os.path.join(DATA_DIR, "customers.json")
 INVOICES_FILE       = os.path.join(DATA_DIR, "invoices.json")
 SETTINGS_FILE       = os.path.join(DATA_DIR, "settings.json")
 STOCK_ENTRY_FILE    = os.path.join(DATA_DIR, "stock_entries.json")
-KARIGAR_FILE        = os.path.join(DATA_DIR, "karigar_transactions.json")
+KARIGAR_FILE          = os.path.join(DATA_DIR, "karigar_transactions.json")
+KARIGAR_PROFILES_FILE = os.path.join(DATA_DIR, "karigar_profiles.json")
 
 # ─── Image Asset Paths ───────────────────────────────────────
 LOGO_FILE        = os.path.join(ASSETS_DIR, "logo.png")          # shop logo (left header)
@@ -49,7 +50,7 @@ def set_data_root(new_root: str):
     global DATA_ROOT, DATA_DIR, BACKUP_DIR, INVOICES_PRINT, LOGS_DIR, ASSETS_DIR
     global SHOP_FILE, STOCK_FILE, ITEMS_CATALOG_FILE, VENDORS_FILE
     global CUSTOMERS_FILE, INVOICES_FILE, SETTINGS_FILE, LOGO_FILE, QR_FILE, METALS_FILE
-    global STOCK_ENTRY_FILE, KARIGAR_FILE
+    global STOCK_ENTRY_FILE, KARIGAR_FILE, KARIGAR_PROFILES_FILE, CERTIFICATE_FILE
 
     DATA_ROOT      = new_root
     DATA_DIR       = os.path.join(DATA_ROOT, "data")
@@ -67,7 +68,8 @@ def set_data_root(new_root: str):
     INVOICES_FILE      = os.path.join(DATA_DIR, "invoices.json")
     SETTINGS_FILE      = os.path.join(DATA_DIR, "settings.json")
     STOCK_ENTRY_FILE   = os.path.join(DATA_DIR, "stock_entries.json")
-    KARIGAR_FILE       = os.path.join(DATA_DIR, "karigar_transactions.json")
+    KARIGAR_FILE          = os.path.join(DATA_DIR, "karigar_transactions.json")
+    KARIGAR_PROFILES_FILE = os.path.join(DATA_DIR, "karigar_profiles.json")
 
     LOGO_FILE        = os.path.join(ASSETS_DIR, "logo.png")
     QR_FILE          = os.path.join(ASSETS_DIR, "qr_code.png")

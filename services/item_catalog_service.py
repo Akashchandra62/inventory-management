@@ -2,6 +2,7 @@
 # services/item_catalog_service.py - Item Catalog (master list)
 # Each item: {name, code, category, purity, group, metal_id, rate, labour}
 # ============================================================
+from __future__ import annotations
 
 from app.file_manager import safe_read, safe_write
 from app.constants import ITEMS_CATALOG_FILE

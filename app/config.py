@@ -9,7 +9,7 @@ class AppConfig:
 
     _shop = {}
     _settings = {}
-
+  
     @classmethod
     def load(cls):
         cls._shop = safe_read(SHOP_FILE) or {}
@@ -73,10 +73,22 @@ class AppConfig:
             return 0
 
     @classmethod
-    def increment_invoice_number(cls) -> Tuple[str, int]:
-        last = cls.last_invoice_number()
-        next_num = last + 1
-        cls._settings["last_invoice_number"] = next_num
-        cls.save_settings(cls._settings)
+    def peek_next_invoice_number(cls) -> Tuple[str, int]:
+        """Return the next invoice number WITHOUT persisting the counter.
+        Call commit_invoice_number() only after the invoice is saved successfully."""
+        next_num = cls.last_invoice_number() + 1
         inv_no = f"{cls.invoice_prefix()}-{next_num:04d}"
+        return inv_no, next_num
+
+    @classmethod
+    def commit_invoice_number(cls, next_num: int) -> bool:
+        """Persist the invoice counter after a successful save."""
+        cls._settings["last_invoice_number"] = next_num
+        return cls.save_settings(cls._settings)
+
+    @classmethod
+    def increment_invoice_number(cls) -> Tuple[str, int]:
+        """Peek + immediately commit — kept for any callers outside create_invoice."""
+        inv_no, next_num = cls.peek_next_invoice_number()
+        cls.commit_invoice_number(next_num)
         return inv_no, next_num
