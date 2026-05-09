@@ -215,7 +215,7 @@ class KarigarPage(QWidget):
         scroll.setWidget(w)
 
         # Title
-        title = QLabel("Karigar Ledger Entry")
+        title = QLabel("Vendor Ledger Entry")
         title.setFont(QFont("Segoe UI", 13, QFont.Bold))
         title.setStyleSheet("color:#2c3e50;")
         vl.addWidget(title)
@@ -225,8 +225,8 @@ class KarigarPage(QWidget):
 
         # Mode toggle
         toggle = QHBoxLayout(); toggle.setSpacing(0)
-        self._btn_take = QPushButton("📥  TAKE from Karigar")
-        self._btn_give = QPushButton("📤  GIVE to Karigar")
+        self._btn_take = QPushButton("📥  TAKE from Vendor")
+        self._btn_give = QPushButton("📤  GIVE to Vendor")
         for b in (self._btn_take, self._btn_give):
             b.setFixedHeight(34)
             b.setCheckable(False)
@@ -259,12 +259,12 @@ class KarigarPage(QWidget):
         return scroll
 
     def _build_karigar_section(self) -> QGroupBox:
-        grp = QGroupBox("Karigar Details"); grp.setStyleSheet(_GRP)
+        grp = QGroupBox("Vendor Details"); grp.setStyleSheet(_GRP)
         g = QGridLayout(grp)
         g.setSpacing(6); g.setContentsMargins(12, 14, 12, 10)
         g.setColumnStretch(1, 1); g.setColumnStretch(3, 1)
 
-        self.fld_name   = _inp("Karigar name or code…")
+        self.fld_name   = _inp("Vendor name or code…")
         self.fld_mobile = _inp("Mobile")
         self.fld_email  = _inp("Email")
         self.fld_pan    = _inp("PAN")
@@ -411,21 +411,18 @@ class KarigarPage(QWidget):
 
         self.give_total_fg  = _ro("0.000")
         self.give_total_fg.setStyleSheet(self.give_total_fg.styleSheet() + "font-size:13px;")
-        self.give_total_pay = _amt_inp("0.00")
         self.give_remarks   = _inp("Remarks (optional)")
 
         gt.addWidget(_lbl("Total Fine Gold Given (g):", bold=True), 0, 0)
         gt.addWidget(self.give_total_fg,  0, 1)
-        gt.addWidget(_lbl("Total Payment (₹):", bold=True), 1, 0)
-        gt.addWidget(self.give_total_pay, 1, 1)
-        gt.addWidget(_lbl("Remarks:"), 2, 0)
-        gt.addWidget(self.give_remarks, 2, 1, 1, 3)
+        gt.addWidget(_lbl("Remarks:"), 1, 0)
+        gt.addWidget(self.give_remarks, 1, 1, 1, 3)
         vl.addWidget(grp_t)
 
         # Enter navigation for give form fields
         _give_nav = [
             self.give_g_gwt, self.give_g_lwt, self.give_g_nwt, self.give_g_tounch,
-            self.give_c_cash, self.give_c_rate, self.give_total_pay, self.give_remarks,
+            self.give_c_cash, self.give_c_rate, self.give_remarks,
         ]
         for i, f in enumerate(_give_nav[:-1]):
             f.returnPressed.connect(_give_nav[i+1].setFocus)
@@ -717,7 +714,7 @@ class KarigarPage(QWidget):
     def _save(self):
         name = self.fld_name.text().strip()
         if not name:
-            QMessageBox.warning(self, "Validation", "Karigar name is required.")
+            QMessageBox.warning(self, "Validation", "Vendor name is required.")
             self.fld_name.setFocus(); return
 
         # Save or update karigar profile
@@ -810,7 +807,6 @@ class KarigarPage(QWidget):
             "give_rate_10g":        _fv(self.give_c_rate.text()),
             "give_cash_fine":       round(fg_cash, 3),
             "total_fine_gold":      total_fg,
-            "total_payment":        _fv(self.give_total_pay.text()),
             "remarks":              self.give_remarks.text().strip(),
         }
         add_transaction(tx)
@@ -827,8 +823,7 @@ class KarigarPage(QWidget):
 
     def _reset_give(self):
         for fld in (self.give_g_gwt, self.give_g_lwt, self.give_g_nwt,
-                    self.give_g_tounch, self.give_c_cash, self.give_c_rate,
-                    self.give_total_pay):
+                    self.give_g_tounch, self.give_c_cash, self.give_c_rate):
             fld.clear()
         for fld in (self.give_g_fg, self.give_c_fg, self.give_total_fg):
             fld.setText("0.000")
@@ -850,7 +845,7 @@ class KarigarPage(QWidget):
         if name:
             self.lbl_right_title.setText(f"Transactions — {name}")
         else:
-            self.lbl_right_title.setText("Transaction History  (select a karigar)")
+            self.lbl_right_title.setText("Transaction History  (select a vendor)")
 
         txs = [
             t for t in self._all_transactions
@@ -934,8 +929,7 @@ class KarigarPage(QWidget):
     def refresh(self):
         self._all_transactions = get_all_transactions()
         self._setup_karigar_completer()
-        if not self.fld_memo.text() or self.fld_memo.text() == "KAR-0001":
-            self.fld_memo.setText(get_next_memo_no())
+        self.fld_memo.setText(get_next_memo_no())
         self._reload_right()
         self._update_summary_bar()
 
@@ -964,7 +958,7 @@ class KarigarDirectoryPage(QWidget):
         root.setContentsMargins(24, 18, 24, 18)
         root.setSpacing(12)
 
-        title = QLabel("Karigar Directory")
+        title = QLabel("Vendor Directory")
         title.setFont(QFont("Segoe UI", 16, QFont.Bold))
         root.addWidget(title)
 
@@ -979,7 +973,7 @@ class KarigarDirectoryPage(QWidget):
         root.addLayout(sr)
 
         # Karigar table
-        klbl = QLabel("All Karigars  —  click a row to view their transactions")
+        klbl = QLabel("All Vendors  —  click a row to view their transactions")
         klbl.setStyleSheet("font-weight:bold;color:#555;font-size:11px;")
         root.addWidget(klbl)
 
@@ -1003,7 +997,7 @@ class KarigarDirectoryPage(QWidget):
         root.addWidget(self.tbl_karigars)
 
         # History
-        self.hist_lbl = QLabel("Transaction History  —  select a karigar above")
+        self.hist_lbl = QLabel("Transaction History  —  select a vendor above")
         self.hist_lbl.setStyleSheet("font-weight:bold;color:#555;font-size:11px;")
         root.addWidget(self.hist_lbl)
 

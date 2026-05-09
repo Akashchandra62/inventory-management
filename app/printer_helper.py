@@ -100,6 +100,20 @@ def save_invoice_as_pdf(invoice: dict, parent=None):
         QMessageBox.critical(parent, "Error", f"Could not generate invoice:\n{str(e)}")
 
 
+def preview_invoice_pdf(invoice: dict, parent=None):
+    """Generate PDF to a temp preview file and open it immediately — no save dialog."""
+    try:
+        from app.constants import INVOICES_PRINT
+        os.makedirs(INVOICES_PRINT, exist_ok=True)
+        inv_num = invoice.get("invoice_number", "preview").replace("/", "-")
+        path = os.path.join(INVOICES_PRINT, f"preview_{inv_num}.pdf")
+        _generate_pdf(invoice, path)
+        os.startfile(path)
+    except Exception as e:
+        traceback.print_exc()
+        QMessageBox.critical(parent, "Preview Error", f"Could not generate preview:\n{str(e)}")
+
+
 # ── Reusable box helpers ──────────────────────────────────────
 def _make_initials_box(initials: str, size: float, bc):
     """Bordered box with shop initials — shown when no logo image exists."""
@@ -229,8 +243,10 @@ def _generate_pdf(invoice: dict, path: str):
     card_paid        = float(invoice.get("card_paid",    0))
     cheque_paid      = float(invoice.get("cheque_paid",  0))
     old_purchase     = float(invoice.get("old_purchase", 0))
-    advance_paid     = float(invoice.get("advance_paid", 0))
-    notes            = invoice.get("notes",             "")
+    advance_paid     = float(invoice.get("advance_paid",  0))
+    refund_amount    = float(invoice.get("refund_amount", 0))
+    refund_mode      = invoice.get("refund_mode",         "")
+    notes            = invoice.get("notes",               "")
 
     # ── Page layout constants ──────────────────────────────────
     W, H   = A4
@@ -269,6 +285,12 @@ def _generate_pdf(invoice: dict, path: str):
         """Table data cell."""
         return Paragraph(str(txt),
                          _ps(size=size, bold=bold, align=align, leading=10))
+
+    def _Ra(val_str, bold=False, size=8, align=TA_CENTER):
+        """Amount cell with ₹ prefix rendered in NirmalaUI (supports the ₹ Unicode glyph)."""
+        fn = _HINDI_FONT_BOLD if bold else _HINDI_FONT
+        return Paragraph(f"₹{val_str}",
+                         _ps(size=size, bold=bold, align=align, leading=10, fontName=fn))
 
     story = []
 
@@ -472,13 +494,13 @@ def _generate_pdf(invoice: dict, path: str):
         metal = _metals_map.get(purity.strip().upper(), '')
         return metal if metal else purity
 
-    # ── Group items by metal name (preserve insertion order) ──
+    # ── Group items by (metal name, purity) ──────────────────
     from collections import OrderedDict as _OD
     _metal_groups = _OD()
     for _it in items:
         _p  = (_it.get('purity') or 'Other').strip()
         _mn = _item_metal_name(_p)
-        _metal_groups.setdefault(_mn, []).append(_it)
+        _metal_groups.setdefault((_mn, _p), []).append(_it)
 
     metal_row_indices = []   # 0-based row indices of metal-total rows
 
@@ -487,7 +509,7 @@ def _generate_pdf(invoice: dict, path: str):
     nett_tot  = 0.0
     serial_no = 0
 
-    for metal_name, grp_items in _metal_groups.items():
+    for (metal_name, metal_purity), grp_items in _metal_groups.items():
         gw_grp = nw_grp = amt_grp = 0.0
 
         for it in grp_items:
@@ -501,7 +523,9 @@ def _generate_pdf(invoice: dict, path: str):
             cat     = it.get('category', '')
             gross_tot += gw;  nett_tot  += nw
             gw_grp    += gw;  nw_grp    += nw;  amt_grp += amt
-            mk_str = f"{mk_pct:.2f}%" if mk_pct > 0 else f"\u20b9{mk:,.2f}"
+            # Making charge: % or \u20b9 flat \u2014 must use NirmalaUI for \u20b9 glyph
+            mk_cell = (TD(f"{mk_pct:.2f}%") if mk_pct > 0
+                       else _Ra(f"{mk:,.2f}"))
 
             name_p = Paragraph(
                 f'<b>{it.get("name", "")}</b>'
@@ -520,13 +544,14 @@ def _generate_pdf(invoice: dict, path: str):
                 TD(f"{lw:.2f}"),
                 TD(f"{nw:.2f}"),
                 TD(f"{float(it.get('rate', 0)):.0f}"),
-                TD(mk_str),
-                TD(f"{amt:,.2f}", bold=True),
+                mk_cell,
+                _Ra(f"{amt:,.2f}", bold=True),
             ])
 
         # Metal total row — always shown
+        _grp_lbl = f"{metal_name} ({metal_purity})" if metal_purity and metal_purity != metal_name else metal_name
         metal_lbl = Paragraph(
-            f'<b>{metal_name} Total</b>',
+            f'<b>{_grp_lbl}</b>',
             _ps(size=9, bold=True, align=TA_LEFT)
         )
         rows.append([
@@ -536,7 +561,7 @@ def _generate_pdf(invoice: dict, path: str):
             TD(''),
             TD(f'{nw_grp:.2f}',   bold=True),
             TD(''), TD(''),
-            TD(f'{amt_grp:,.2f}', bold=True),
+            _Ra(f'{amt_grp:,.2f}', bold=True),
         ])
         metal_row_indices.append(len(rows) - 1)
 
@@ -553,7 +578,7 @@ def _generate_pdf(invoice: dict, path: str):
         TD(''),
         TD(f"{nett_tot:.2f}",  bold=True),
         TD(''), TD(''),
-        TD(f"{subtotal:,.2f}", bold=True),
+        _Ra(f"{subtotal:,.2f}", bold=True),
     ])
 
     nr = len(rows)
@@ -623,6 +648,9 @@ def _generate_pdf(invoice: dict, path: str):
         pay_data.append([P("<b>Old Purchase (-)</b>", size=8), _pamt(old_purchase)])
     if advance_paid > 0:
         pay_data.append([P("<b>Advance (-)</b>", size=8), _pamt(advance_paid)])
+    if refund_amount > 0:
+        _ref_lbl = f"Refund Given ({refund_mode})" if refund_mode else "Refund Given"
+        pay_data.append([P(f"<b>{_ref_lbl}</b>", size=8), _pamt(refund_amount)])
     pay_data.append([P("<b>TOTAL PAYMENT -</b>", size=8),
                      P(f"₹ {total_paid:,.0f} /-", size=8, bold=True,
                        align=TA_RIGHT, fontName=_HINDI_FONT_BOLD)])
@@ -668,6 +696,7 @@ def _generate_pdf(invoice: dict, path: str):
                 ('BOTTOMPADDING', (0, 0), (-1, -1), 0),
                 ('LEFTPADDING',   (0, 0), (-1, -1), 0),
                 ('RIGHTPADDING',  (0, 0), (-1, -1), 0),
+                ('RIGHTPADDING',  (1, 0), (1,  -1), 10),
             ]))
         except Exception:
             bank_cell = bank_para
@@ -688,15 +717,17 @@ def _generate_pdf(invoice: dict, path: str):
     ]))
 
     # ── Right: Totals ─────────────────────────────────────────
-    round_off_str = (f"- {abs(round_off):.2f}" if round_off < 0
-                     else f"+ {round_off:.2f}"  if round_off > 0
-                     else "0.00")
+    # Round-off is always subtracted from the total (stored as a positive value)
+    round_off_str = f"- {round_off:.2f}" if round_off != 0 else "0.00"
+    _net_payable  = round(grand_total - round_off, 2)
 
-    def srow(lbl, val, bold=False):
+    def srow(lbl, val, bold=False, currency=True):
         sz = 9 if bold else 8
+        fn = _HINDI_FONT_BOLD if (bold and currency) else (_HINDI_FONT if currency else None)
+        val_disp = f"₹ {val}" if currency else val
         return [P(lbl, size=sz, bold=bold, align=TA_LEFT),
                 P(':',  size=sz, bold=bold, align=TA_CENTER),
-                P(val,  size=sz, bold=bold, align=TA_RIGHT)]
+                P(val_disp, size=sz, bold=bold, align=TA_RIGHT, fontName=fn)]
 
     sig_p = Paragraph(
         "________________________<br/>Customer's Signature",
@@ -704,36 +735,39 @@ def _generate_pdf(invoice: dict, path: str):
     )
 
     sum_rows = [
-        srow('Gross Amount',          f"{subtotal:,.2f}"),
-        srow(f'CGST @ {cgst_pct}%',  f"{cgst_amt:.2f}"),
-        srow(f'SGST @ {sgst_pct}%',  f"{sgst_amt:.2f}"),
-        srow('Amt After GST',          f"{amt_after_gst:.2f}"),
-        srow('Round Off',              round_off_str),
-        srow('Net Payable',            f"{grand_total:,.2f}", bold=True),
+        srow('Gross Amount',         f"{subtotal:,.2f}"),
+        srow(f'CGST @ {cgst_pct}%', f"{cgst_amt:.2f}"),
+        srow(f'SGST @ {sgst_pct}%', f"{sgst_amt:.2f}"),
+    ]
+    if igst_pct > 0:
+        sum_rows.append(srow(f'IGST @ {igst_pct}%', f"{igst_amt:.2f}"))
+    sum_rows += [
+        srow('Amt After GST', f"{amt_after_gst:.2f}"),
+        srow('Round Off',     round_off_str, currency=False),
+        srow('Net Payable',   f"{_net_payable:,.2f}", bold=True),
         [sig_p, '', ''],
     ]
+    net_idx = len(sum_rows) - 2
+    sig_idx = len(sum_rows) - 1
 
     r1, r2, r3 = RW * 0.48, RW * 0.06, RW * 0.46
     right_bottom = Table(sum_rows, colWidths=[r1, r2, r3])
     right_bottom.setStyle(TableStyle([
-        ('VALIGN',        (0, 0), (-1, -1), 'MIDDLE'),
-        ('TOPPADDING',    (0, 0), (-1, -1), 3),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
-        ('LEFTPADDING',   (0, 0), (-1, -1), 3),
-        ('RIGHTPADDING',  (0, 0), (-1, -1), 2),
-        # value column: minimal right padding so numbers don't get clipped
-        ('RIGHTPADDING',  (2, 0), (2, -1), 4),
-        ('LINEBELOW',     (0, 0), (-1,  4), 0.5, BLACK),
-        # Net Payable row (index 5) — gray bg, thick top border
-        ('BACKGROUND',    (0, 5), (-1,  5), DGRAY),
-        ('LINEABOVE',     (0, 5), (-1,  5), 1.5, BLACK),
-        ('LINEBELOW',     (0, 5), (-1,  5), 0.5, BLACK),
-        # Signature row (index 6) — spanned, centered
-        ('SPAN',          (0, 6), (-1,  6)),
-        ('LINEABOVE',     (0, 6), (-1,  6), 0.5, BLACK),
-        ('ALIGN',         (0, 6), (-1,  6), 'CENTER'),
-        ('TOPPADDING',    (0, 6), (-1,  6), 10),
-        ('BOTTOMPADDING', (0, 6), (-1,  6), 6),
+        ('VALIGN',        (0, 0),          (-1, -1),          'MIDDLE'),
+        ('TOPPADDING',    (0, 0),          (-1, -1),          3),
+        ('BOTTOMPADDING', (0, 0),          (-1, -1),          3),
+        ('LEFTPADDING',   (0, 0),          (-1, -1),          3),
+        ('RIGHTPADDING',  (0, 0),          (-1, -1),          2),
+        ('RIGHTPADDING',  (2, 0),          (2,  -1),          4),
+        ('LINEBELOW',     (0, 0),          (-1, net_idx - 1), 0.5, BLACK),
+        ('BACKGROUND',    (0, net_idx),    (-1, net_idx),     DGRAY),
+        ('LINEABOVE',     (0, net_idx),    (-1, net_idx),     1.5, BLACK),
+        ('LINEBELOW',     (0, net_idx),    (-1, net_idx),     0.5, BLACK),
+        ('SPAN',          (0, sig_idx),    (-1, sig_idx)),
+        ('LINEABOVE',     (0, sig_idx),    (-1, sig_idx),     0.5, BLACK),
+        ('ALIGN',         (0, sig_idx),    (-1, sig_idx),     'CENTER'),
+        ('TOPPADDING',    (0, sig_idx),    (-1, sig_idx),     10),
+        ('BOTTOMPADDING', (0, sig_idx),    (-1, sig_idx),     6),
     ]))
 
     # ── Combine left + right ──────────────────────────────────
@@ -882,12 +916,14 @@ def _build_html_preview(invoice: dict) -> str:
     igst_amt = float(invoice.get("igst_amount", round(subtotal * igst_pct / 100, 2)))
     grand    = float(invoice.get("grand_total", subtotal + cgst_amt + sgst_amt + igst_amt))
     round_off = float(invoice.get("round_off", round(grand - (subtotal + cgst_amt + sgst_amt + igst_amt), 2)))
-    _cash_h  = float(invoice.get("cash_paid",    0))
-    _upi_h   = float(invoice.get("upi_paid",     0))
-    _card_h  = float(invoice.get("card_paid",    0))
-    _chq_h   = float(invoice.get("cheque_paid",  0))
-    _op_h    = float(invoice.get("old_purchase", 0))
-    _adv_h   = float(invoice.get("advance_paid", 0))
+    _cash_h        = float(invoice.get("cash_paid",     0))
+    _upi_h         = float(invoice.get("upi_paid",      0))
+    _card_h        = float(invoice.get("card_paid",     0))
+    _chq_h         = float(invoice.get("cheque_paid",   0))
+    _op_h          = float(invoice.get("old_purchase",  0))
+    _adv_h         = float(invoice.get("advance_paid",  0))
+    _refund_h      = float(invoice.get("refund_amount", 0))
+    _refund_mode_h = invoice.get("refund_mode",         "")
     _tp_h    = _cash_h + _upi_h + _card_h + _chq_h + _op_h + _adv_h
     total_paid_html = _tp_h if _tp_h > 0 else grand
 
@@ -912,11 +948,11 @@ def _build_html_preview(invoice: dict) -> str:
     for _it in items:
         _p  = (_it.get('purity') or 'Other').strip()
         _mn = _item_metal(_p)
-        _grps.setdefault(_mn, []).append(_it)
+        _grps.setdefault((_mn, _p), []).append(_it)
 
     rows_html = ""
     serial = 0
-    for metal_name, grp_items in _grps.items():
+    for (metal_name, metal_purity), grp_items in _grps.items():
         gw_grp = nw_grp = amt_grp = 0.0
         for it in grp_items:
             gw  = float(it.get('weight', 0))
@@ -924,7 +960,7 @@ def _build_html_preview(invoice: dict) -> str:
             nw  = round(gw - lw, 3)
             mk     = float(it.get('making_charge', 0))
             mk_pct = float(it.get('making_pct',    0))
-            mk_s   = f"{mk_pct:.2f}%" if mk_pct > 0 else f"₹{mk:,.2f}"
+            mk_s   = f"{mk_pct:.2f}%" if mk_pct > 0 else f"&#x20B9;{mk:,.2f}"
             gw_grp += gw; nw_grp += nw; amt_grp += float(it.get('total', 0))
             serial += 1
             rows_html += (
@@ -940,24 +976,39 @@ def _build_html_preview(invoice: dict) -> str:
                 f"<td>{gw:.2f}</td><td>{lw:.2f}</td><td>{nw:.2f}</td>"
                 f"<td>{float(it.get('rate',0)):.0f}</td>"
                 f"<td>{mk_s}</td>"
-                f"<td><b>{float(it.get('total',0)):,.2f}</b></td>"
+                f"<td><b>&#x20B9;{float(it.get('total',0)):,.2f}</b></td>"
                 f"</tr>"
             )
         # Metal total row — always shown
+        _grp_lbl_h = f"{metal_name} ({metal_purity})" if metal_purity and metal_purity != metal_name else metal_name
         rows_html += (
             f"<tr style='background:#e4e4e4;font-weight:bold;'>"
             f"<td colspan='7' style='text-align:left;padding-left:8px;'>"
-            f"{metal_name} Total</td>"
+            f"{_grp_lbl_h}</td>"
             f"<td>{gw_grp:.2f}</td>"
             f"<td></td>"
             f"<td>{nw_grp:.2f}</td>"
             f"<td></td><td></td>"
-            f"<td>{amt_grp:,.2f}</td>"
+            f"<td>&#x20B9;{amt_grp:,.2f}</td>"
             f"</tr>"
         )
 
-    r_off = (f"- {abs(round_off):.2f}" if round_off < 0
-             else f"+ {round_off:.2f}" if round_off > 0 else "0.00")
+    r_off = f"- {round_off:.2f}" if round_off != 0 else "0.00"
+
+    # Pre-build conditional HTML snippets so the f-string stays clean
+    _igst_row_html = (
+        f'<div class="srow"><span>IGST @ {igst_pct}%</span>'
+        f'<span>&#x20B9; {igst_amt:.2f}</span></div>'
+        if igst_pct > 0 else ''
+    )
+    _refund_row_html = ''
+    if _refund_h > 0:
+        _ref_lbl = f"Refund Given ({_refund_mode_h})" if _refund_mode_h else "Refund Given"
+        _refund_row_html = (
+            '<div style="display:flex;justify-content:space-between">'
+            f'<b>{_ref_lbl}</b>'
+            f'<span style="padding-right:6px">&#x20B9; {_refund_h:,.0f} /-</span></div>'
+        )
 
     mob = shop.get('mobile', '')
     mob2 = shop.get('mobile2', '')
@@ -1058,6 +1109,7 @@ def _build_html_preview(invoice: dict) -> str:
         {f'<div style="display:flex;justify-content:space-between"><b>Cheque</b><span style="padding-right:6px">&#x20B9; {_chq_h:,.0f} /-</span></div>' if _chq_h > 0 else ""}
         {f'<div style="display:flex;justify-content:space-between"><b>Old Purchase (-)</b><span style="padding-right:6px">&#x20B9; {_op_h:,.0f} /-</span></div>' if _op_h > 0 else ""}
         {f'<div style="display:flex;justify-content:space-between"><b>Advance (-)</b><span style="padding-right:6px">&#x20B9; {_adv_h:,.0f} /-</span></div>' if _adv_h > 0 else ""}
+        {_refund_row_html}
         <div style="display:flex;justify-content:space-between">
           <b>TOTAL PAYMENT -</b><span style="padding-right:6px"><b>&#x20B9; {total_paid_html:,.0f} /-</b></span>
         </div>
@@ -1074,12 +1126,13 @@ def _build_html_preview(invoice: dict) -> str:
       </div>
     </div>
     <div class="right-bot">
-      <div class="srow"><span>Gross Amount</span><span>{subtotal:,.2f}</span></div>
-      <div class="srow"><span>CGST @ {cgst_pct}%</span><span>{cgst_amt:.2f}</span></div>
-      <div class="srow"><span>SGST @ {sgst_pct}%</span><span>{sgst_amt:.2f}</span></div>
-      <div class="srow"><span>Amt After GST</span><span>{subtotal+cgst_amt+sgst_amt:.2f}</span></div>
+      <div class="srow"><span>Gross Amount</span><span>&#x20B9; {subtotal:,.2f}</span></div>
+      <div class="srow"><span>CGST @ {cgst_pct}%</span><span>&#x20B9; {cgst_amt:.2f}</span></div>
+      <div class="srow"><span>SGST @ {sgst_pct}%</span><span>&#x20B9; {sgst_amt:.2f}</span></div>
+      {_igst_row_html}
+      <div class="srow"><span>Amt After GST</span><span>&#x20B9; {subtotal+cgst_amt+sgst_amt+igst_amt:.2f}</span></div>
       <div class="srow"><span>Round Off</span><span>{r_off}</span></div>
-      <div class="srow net"><span>Net Payable</span><span>{grand:,.2f}</span></div>
+      <div class="srow net"><span>Net Payable</span><span>&#x20B9; {grand - round_off:,.2f}</span></div>
       <div class="sig">________________________<br/>Customer's Signature</div>
     </div>
   </div>

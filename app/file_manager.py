@@ -1,113 +1,38 @@
 # ============================================================
-# file_manager.py - Create folders, init JSON files safely
+# file_manager.py - Folder creation + DB initialisation
 # ============================================================
 
 import os
-import json
 import logging
 from app.constants import (
-    DATA_ROOT, DATA_DIR, BACKUP_DIR, INVOICES_PRINT, LOGS_DIR,
-    SHOP_FILE, STOCK_FILE, ITEMS_CATALOG_FILE, VENDORS_FILE,
-    CUSTOMERS_FILE, INVOICES_FILE, SETTINGS_FILE, STOCK_ENTRY_FILE,
-    KARIGAR_FILE,
-    DEFAULT_INVOICE_PREFIX, DEFAULT_TAX_PERCENT
+    DATA_ROOT, DATA_DIR, BACKUP_DIR, INVOICES_PRINT, LOGS_DIR, ASSETS_DIR,
 )
-
-
-# ─── Default Structures ─────────────────────────────────────
-DEFAULT_STRUCTURES = {
-    SHOP_FILE: {
-        "shop_name": "",
-        "owner_name": "",
-        "address": "",
-        "mobile": "",
-        "gst_number": "",
-        "email": "",
-        "invoice_prefix": DEFAULT_INVOICE_PREFIX,
-        "default_tax": DEFAULT_TAX_PERCENT,
-        "printer": ""
-    },
-    STOCK_FILE:          [],
-    ITEMS_CATALOG_FILE:  [],
-    VENDORS_FILE:        [],
-    CUSTOMERS_FILE:      [],
-    INVOICES_FILE:       [],
-    STOCK_ENTRY_FILE:    [],
-    KARIGAR_FILE:        [],
-    SETTINGS_FILE: {
-        "invoice_prefix": DEFAULT_INVOICE_PREFIX,
-        "default_tax": DEFAULT_TAX_PERCENT,
-        "backup_folder": BACKUP_DIR,
-        "last_invoice_number": 0,
-        "username": "admin",
-        "password": "jewelry@123"
-    }
-}
 
 
 def ensure_all_folders():
     """Create all required directories if they do not exist."""
-    for folder in [DATA_ROOT, DATA_DIR, BACKUP_DIR, INVOICES_PRINT, LOGS_DIR]:
+    for folder in [DATA_ROOT, DATA_DIR, BACKUP_DIR, INVOICES_PRINT, LOGS_DIR, ASSETS_DIR]:
         os.makedirs(folder, exist_ok=True)
 
 
-def ensure_all_files():
-    """Create missing JSON files with default content."""
-    for path, default in DEFAULT_STRUCTURES.items():
-        if not os.path.exists(path):
-            safe_write(path, default)
+def initialize_app_storage():
+    """Full initialisation: create folders then init the SQLite database."""
+    ensure_all_folders()
+    from app.database import init_db
+    init_db()
 
 
 def is_first_run() -> bool:
-    """Return True if shop_details.json is missing or shop_name is empty."""
-    if not os.path.exists(SHOP_FILE):
-        return True
-    data = safe_read(SHOP_FILE)
-    if isinstance(data, dict):
-        return data.get("shop_name", "").strip() == ""
-    return True
-
-
-def safe_read(path: str):
-    """Read a JSON file safely. Returns None on error."""
+    """Return True if shop_details has no shop_name set (fresh install)."""
     try:
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except FileNotFoundError:
-        logging.warning(f"File not found: {path}")
-        return None
-    except json.JSONDecodeError:
-        logging.error(f"Corrupted JSON: {path}. Resetting to default.")
-        default = DEFAULT_STRUCTURES.get(path)
-        if default is not None:
-            safe_write(path, default)
-        return default
-
-
-def safe_write(path: str, data) -> bool:
-    """Write data to a JSON file atomically. Returns True on success.
-
-    Writes to a .tmp sibling first, then os.replace() swaps it in so a
-    crash mid-write can never leave a half-written (corrupted) file.
-    """
-    tmp_path = path + ".tmp"
-    try:
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(tmp_path, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
-        os.replace(tmp_path, path)
-        return True
+        from app.database import get_db
+        with get_db() as conn:
+            row = conn.execute(
+                "SELECT shop_name FROM shop_details WHERE id = 1"
+            ).fetchone()
+        if row is None:
+            return True
+        return (row["shop_name"] or "").strip() == ""
     except Exception as e:
-        logging.error(f"Failed to write {path}: {e}")
-        try:
-            if os.path.exists(tmp_path):
-                os.remove(tmp_path)
-        except Exception:
-            pass
-        return False
-
-
-def initialize_app_storage():
-    """Full initialization: create folders + files."""
-    ensure_all_folders()
-    ensure_all_files()
+        logging.warning(f"is_first_run check failed: {e}")
+        return True

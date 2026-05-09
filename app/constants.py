@@ -15,42 +15,32 @@ DATA_DIR        = os.path.join(DATA_ROOT, "data")
 BACKUP_DIR      = os.path.join(DATA_ROOT, "backups")
 INVOICES_PRINT  = os.path.join(DATA_ROOT, "invoices_print")
 LOGS_DIR        = os.path.join(DATA_ROOT, "logs")
-ASSETS_DIR      = os.path.join(DATA_ROOT, "assets")   # ← logo, QR stored here
+ASSETS_DIR      = os.path.join(DATA_ROOT, "assets")
 
-# ─── JSON File Paths ────────────────────────────────────────
-SHOP_FILE           = os.path.join(DATA_DIR, "shop_details.json")
-STOCK_FILE          = os.path.join(DATA_DIR, "stock.json")
-ITEMS_CATALOG_FILE  = os.path.join(DATA_DIR, "item_catalog.json")
-METALS_FILE         = os.path.join(DATA_DIR, "metals.json")
-VENDORS_FILE        = os.path.join(DATA_DIR, "vendors.json")
-CUSTOMERS_FILE      = os.path.join(DATA_DIR, "customers.json")
-INVOICES_FILE       = os.path.join(DATA_DIR, "invoices.json")
-SETTINGS_FILE       = os.path.join(DATA_DIR, "settings.json")
-STOCK_ENTRY_FILE    = os.path.join(DATA_DIR, "stock_entries.json")
-KARIGAR_FILE          = os.path.join(DATA_DIR, "karigar_transactions.json")
-KARIGAR_PROFILES_FILE = os.path.join(DATA_DIR, "karigar_profiles.json")
+# ─── SQLite Database File ────────────────────────────────────
+DB_FILE         = os.path.join(DATA_DIR, "jewelry.db")
 
 # ─── Image Asset Paths ───────────────────────────────────────
-LOGO_FILE        = os.path.join(ASSETS_DIR, "logo.png")          # shop logo (left header)
-QR_FILE          = os.path.join(ASSETS_DIR, "qr_code.png")       # payment QR image
-CERTIFICATE_FILE = os.path.join(ASSETS_DIR, "certificate.png")   # hallmark / certificate (right header)
+LOGO_FILE        = os.path.join(ASSETS_DIR, "logo.png")
+QR_FILE          = os.path.join(ASSETS_DIR, "qr_code.png")
+CERTIFICATE_FILE = os.path.join(ASSETS_DIR, "certificate.png")
 
-# ─── Hardcoded Login Credentials ────────────────────────────
+# ─── Hardcoded Login Credentials (fallback only) ─────────────
 ADMIN_USERNAME  = "admin"
 ADMIN_PASSWORD  = "jewelry@123"
 
 # ─── Machine Authorization ──────────────────────────────────
 ALLOWED_MACHINE_ID = "ANY"
 
+
 def set_data_root(new_root: str):
     """
     Redirect every data path to a chosen profile folder.
-    MUST be called before file_manager / config / any service is imported.
+    MUST be called before any service or config module is imported.
+    Supports laptop profiles and external-drive (pendrive) profiles.
     """
     global DATA_ROOT, DATA_DIR, BACKUP_DIR, INVOICES_PRINT, LOGS_DIR, ASSETS_DIR
-    global SHOP_FILE, STOCK_FILE, ITEMS_CATALOG_FILE, VENDORS_FILE
-    global CUSTOMERS_FILE, INVOICES_FILE, SETTINGS_FILE, LOGO_FILE, QR_FILE, METALS_FILE
-    global STOCK_ENTRY_FILE, KARIGAR_FILE, KARIGAR_PROFILES_FILE, CERTIFICATE_FILE
+    global DB_FILE, LOGO_FILE, QR_FILE, CERTIFICATE_FILE
 
     DATA_ROOT      = new_root
     DATA_DIR       = os.path.join(DATA_ROOT, "data")
@@ -59,18 +49,7 @@ def set_data_root(new_root: str):
     LOGS_DIR       = os.path.join(DATA_ROOT, "logs")
     ASSETS_DIR     = os.path.join(DATA_ROOT, "assets")
 
-    SHOP_FILE          = os.path.join(DATA_DIR, "shop_details.json")
-    STOCK_FILE         = os.path.join(DATA_DIR, "stock.json")
-    ITEMS_CATALOG_FILE = os.path.join(DATA_DIR, "item_catalog.json")
-    METALS_FILE        = os.path.join(DATA_DIR, "metals.json")
-    VENDORS_FILE       = os.path.join(DATA_DIR, "vendors.json")
-    CUSTOMERS_FILE     = os.path.join(DATA_DIR, "customers.json")
-    INVOICES_FILE      = os.path.join(DATA_DIR, "invoices.json")
-    SETTINGS_FILE      = os.path.join(DATA_DIR, "settings.json")
-    STOCK_ENTRY_FILE   = os.path.join(DATA_DIR, "stock_entries.json")
-    KARIGAR_FILE          = os.path.join(DATA_DIR, "karigar_transactions.json")
-    KARIGAR_PROFILES_FILE = os.path.join(DATA_DIR, "karigar_profiles.json")
-
+    DB_FILE          = os.path.join(DATA_DIR, "jewelry.db")
     LOGO_FILE        = os.path.join(ASSETS_DIR, "logo.png")
     QR_FILE          = os.path.join(ASSETS_DIR, "qr_code.png")
     CERTIFICATE_FILE = os.path.join(ASSETS_DIR, "certificate.png")

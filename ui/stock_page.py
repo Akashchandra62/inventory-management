@@ -7,16 +7,66 @@ from PyQt5.QtWidgets import (
     QTableWidget, QTableWidgetItem, QFrame, QScrollArea,
     QHeaderView, QAbstractItemView, QComboBox,
 )
-from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QFont, QColor
+from PyQt5.QtCore import Qt, pyqtSignal, QPropertyAnimation, QEasingCurve
+from PyQt5.QtGui import QFont, QColor, QPainter, QPen, QBrush
 
+from app.config import AppConfig
 from services.stock_entry_service import get_inventory
+
+
+class ToggleSwitch(QWidget):
+    """Painted iOS-style toggle switch. Emits toggled(bool) on click."""
+    toggled = pyqtSignal(bool)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._checked = False
+        self.setFixedSize(52, 26)
+        self.setCursor(Qt.PointingHandCursor)
+
+    def isChecked(self):
+        return self._checked
+
+    def setChecked(self, val):
+        self._checked = bool(val)
+        self.update()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._checked = not self._checked
+            self.update()
+            self.toggled.emit(self._checked)
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+
+        w, h = self.width(), self.height()
+        r = h // 2          # track corner radius
+        knob_d = h - 6      # knob diameter
+        knob_r = knob_d // 2
+
+        # Track
+        track_color = QColor("#e74c3c") if self._checked else QColor("#ccc")
+        p.setPen(Qt.NoPen)
+        p.setBrush(QBrush(track_color))
+        p.drawRoundedRect(0, 0, w, h, r, r)
+
+        # Knob position: OFF = left, ON = right
+        knob_x = (w - knob_d - 3) if self._checked else 3
+        knob_y = (h - knob_d) // 2
+        p.setBrush(QBrush(QColor("white")))
+        p.setPen(QPen(QColor("#bbb"), 0.5))
+        p.drawEllipse(knob_x, knob_y, knob_d, knob_d)
+
+        p.end()
 
 
 class StockPage(QWidget):
     def __init__(self):
         super().__init__()
-        self._all: list[dict] = []
+        self._all = []
+        self._low_stock_only = False
         self._build_ui()
 
     def _build_ui(self):
@@ -63,6 +113,22 @@ class StockPage(QWidget):
         self.txt_search.setMinimumHeight(32)
         self.txt_search.textChanged.connect(self._apply_filter)
         fr.addWidget(self.txt_search)
+
+        low_wrap = QHBoxLayout(); low_wrap.setSpacing(6)
+        low_lbl = QLabel("Low Stock:")
+        low_lbl.setStyleSheet("color:#444; font-size:11px; font-weight:600;")
+        self._toggle = ToggleSwitch()
+        self._toggle.toggled.connect(self._toggle_low_stock)
+        low_wrap.addWidget(low_lbl)
+        low_wrap.addWidget(self._toggle)
+        fr.addLayout(low_wrap)
+
+        self._lbl_low_count = QLabel("")
+        self._lbl_low_count.setStyleSheet(
+            "color:#e74c3c; font-size:11px; font-weight:bold; padding:0 4px;"
+        )
+        fr.addWidget(self._lbl_low_count)
+
         fr.addStretch()
         root.addLayout(fr)
 
@@ -127,7 +193,17 @@ class StockPage(QWidget):
         self.cmb_metal.blockSignals(False)
         self._apply_filter()
 
+    def _toggle_low_stock(self, checked: bool):
+        self._low_stock_only = checked
+        self._apply_filter()
+
+    @staticmethod
+    def _qty_tracked(item):
+        """Return True only if this item has ever had a qty-based entry (not weight-only)."""
+        return item.get("qty_in", 0) > 0 or item.get("qty_out", 0) > 0
+
     def _apply_filter(self):
+        threshold = AppConfig.low_stock_threshold()
         metal = self.cmb_metal.currentText()
         q = self.txt_search.text().strip().lower()
         data = self._all
@@ -137,11 +213,29 @@ class StockPage(QWidget):
             data = [i for i in data
                     if q in i.get("item_name", "").lower()
                     or q in i.get("sub_name",  "").lower()]
-        self._populate(data)
 
-    def _populate(self, data: list):
+        # Only qty-tracked items count toward low-stock badge
+        low_count = sum(
+            1 for i in data
+            if self._qty_tracked(i) and i.get("current_qty", 0) <= threshold
+        )
+        self._lbl_low_count.setText(
+            f"⚠️ {low_count} low" if low_count else ""
+        )
+
+        if self._low_stock_only:
+            data = [i for i in data
+                    if self._qty_tracked(i) and i.get("current_qty", 0) <= threshold]
+
+        self._populate(data, threshold)
+
+    def _populate(self, data: list, threshold: int = 5):
         self.tbl.setRowCount(0)
         ti = to = tc = 0.0
+
+        ROW_LOW   = QColor("#fff3cd")   # yellow-orange — low but > 0
+        ROW_ZERO  = QColor("#fdecea")   # light red — out of stock
+
         for inv in data:
             r = self.tbl.rowCount()
             self.tbl.insertRow(r)
@@ -161,6 +255,16 @@ class StockPage(QWidget):
                 inv.get("location",  ""),
                 inv.get("last_date", ""),
             ]
+
+            # Highlight only when qty is actually tracked (not weight-only entries)
+            qty_tracked = inv.get("qty_in", 0) > 0 or inv.get("qty_out", 0) > 0
+            if qty_tracked and cur_qty <= 0:
+                row_bg = ROW_ZERO
+            elif qty_tracked and cur_qty <= threshold:
+                row_bg = ROW_LOW
+            else:
+                row_bg = None
+
             _right = {4, 5, 6, 7, 8, 9}
             for c, v in enumerate(vals):
                 cell = QTableWidgetItem(v)
@@ -168,10 +272,14 @@ class StockPage(QWidget):
                     Qt.AlignRight | Qt.AlignVCenter if c in _right
                     else Qt.AlignCenter
                 )
-                if c == 6 and cur_wt <= 0:
-                    cell.setForeground(QColor("#e74c3c"))
-                elif c == 9 and cur_qty <= 0:
-                    cell.setForeground(QColor("#e74c3c"))
+                if row_bg:
+                    cell.setBackground(row_bg)
+                if c == 9 and qty_tracked and cur_qty <= 0:
+                    cell.setForeground(QColor("#c0392b"))
+                    f = cell.font(); f.setBold(True); cell.setFont(f)
+                elif c == 9 and qty_tracked and cur_qty <= threshold:
+                    cell.setForeground(QColor("#856404"))
+                    f = cell.font(); f.setBold(True); cell.setFont(f)
                 self.tbl.setItem(r, c, cell)
             ti += inv.get("wt_in",  0.0)
             to += inv.get("wt_out", 0.0)

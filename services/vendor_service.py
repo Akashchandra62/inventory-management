@@ -1,35 +1,52 @@
 # services/vendor_service.py
-from app.file_manager import safe_read, safe_write
-from app.constants import VENDORS_FILE
 from app.utils import unique_id
 from models.vendor_model import VendorModel
 
 
 def get_all_vendors() -> list:
-    return safe_read(VENDORS_FILE) or []
-
-
-def save_all_vendors(data: list) -> bool:
-    return safe_write(VENDORS_FILE, data)
+    from app.database import get_db
+    with get_db() as conn:
+        rows = conn.execute("SELECT * FROM vendors ORDER BY vendor_name").fetchall()
+    return [dict(r) for r in rows]
 
 
 def add_vendor(vendor: VendorModel) -> bool:
-    vendors = get_all_vendors()
     vendor.vendor_id = unique_id()
-    vendors.append(vendor.to_dict())
-    return save_all_vendors(vendors)
+    d = vendor.to_dict()
+    from app.database import get_db
+    try:
+        with get_db() as conn:
+            conn.execute(
+                "INSERT INTO vendors (vendor_id, vendor_name, phone, address, gst_number, email, notes)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (d["vendor_id"], d["vendor_name"], d.get("phone", ""),
+                 d.get("address", ""), d.get("gst_number", ""),
+                 d.get("email", ""), d.get("notes", "")),
+            )
+        return True
+    except Exception:
+        return False
 
 
 def update_vendor(vendor_id: str, updated: dict) -> bool:
-    vendors = get_all_vendors()
-    for i, v in enumerate(vendors):
-        if v.get("vendor_id") == vendor_id:
-            vendors[i].update(updated)
-            return save_all_vendors(vendors)
-    return False
+    fields = {k: v for k, v in updated.items() if k != "vendor_id"}
+    if not fields:
+        return False
+    set_clause = ", ".join(f"{k} = ?" for k in fields)
+    from app.database import get_db
+    try:
+        with get_db() as conn:
+            result = conn.execute(
+                f"UPDATE vendors SET {set_clause} WHERE vendor_id = ?",
+                (*fields.values(), vendor_id),
+            )
+        return result.rowcount > 0
+    except Exception:
+        return False
 
 
 def delete_vendor(vendor_id: str) -> bool:
-    vendors = get_all_vendors()
-    new = [v for v in vendors if v.get("vendor_id") != vendor_id]
-    return save_all_vendors(new)
+    from app.database import get_db
+    with get_db() as conn:
+        result = conn.execute("DELETE FROM vendors WHERE vendor_id = ?", (vendor_id,))
+    return result.rowcount > 0

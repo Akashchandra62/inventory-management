@@ -1,33 +1,27 @@
 # services/auth_service.py
-from app.constants import ADMIN_USERNAME, ADMIN_PASSWORD, SETTINGS_FILE
-from app.file_manager import safe_read, safe_write
+from app.constants import ADMIN_USERNAME, ADMIN_PASSWORD
 
 
 def _get_credentials():
-    """Read credentials from settings.json, falling back to constants."""
-    data = safe_read(SETTINGS_FILE)
-    if isinstance(data, dict):
-        username = data.get("username", ADMIN_USERNAME)
-        password = data.get("password", ADMIN_PASSWORD)
-        return username, password
-    return ADMIN_USERNAME, ADMIN_PASSWORD
+    from app.database import get_db
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT key, value FROM settings WHERE key IN ('username', 'password')"
+        ).fetchall()
+    creds = {r["key"]: r["value"] for r in rows}
+    return (
+        creds.get("username", ADMIN_USERNAME),
+        creds.get("password", ADMIN_PASSWORD),
+    )
 
 
 def authenticate(username: str, password: str) -> bool:
-    """Validate login credentials against stored values."""
     stored_user, stored_pass = _get_credentials()
     return username.strip() == stored_user and password == stored_pass
 
 
-def change_credentials(current_password: str, new_username: str, new_password: str) -> tuple[bool, str]:
-    """
-    Change login credentials.
-    Returns (success: bool, message: str).
-    """
-    data = safe_read(SETTINGS_FILE)
-    if not isinstance(data, dict):
-        data = {}
-    stored_pass = data.get("password", ADMIN_PASSWORD)
+def change_credentials(current_password: str, new_username: str, new_password: str) -> tuple:
+    _, stored_pass = _get_credentials()
     if current_password != stored_pass:
         return False, "Current password is incorrect."
 
@@ -37,9 +31,13 @@ def change_credentials(current_password: str, new_username: str, new_password: s
     if not new_password:
         return False, "New password cannot be empty."
 
-    data["username"] = new_username
-    data["password"] = new_password
-
-    if safe_write(SETTINGS_FILE, data):
+    from app.database import get_db
+    try:
+        with get_db() as conn:
+            conn.executemany(
+                "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
+                [("username", new_username), ("password", new_password)],
+            )
         return True, "Credentials updated successfully!"
-    return False, "Failed to save credentials."
+    except Exception as e:
+        return False, f"Failed to save credentials: {e}"

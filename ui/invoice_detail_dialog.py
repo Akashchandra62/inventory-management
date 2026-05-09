@@ -179,7 +179,7 @@ class InvoiceDetailDialog(QDialog):
         for it in items:
             p  = (it.get('purity') or 'Other').strip()
             mn = _item_metal(p)
-            groups.setdefault(mn, []).append(it)
+            groups.setdefault((mn, p), []).append(it)
 
         SUBT_BG = QColor('#e4e4e4')
         SUBT_FG = QColor('#2c3e50')
@@ -189,7 +189,7 @@ class InvoiceDetailDialog(QDialog):
         total_rows = len(items) + len(groups)   # always one total row per metal
         tbl.setRowCount(total_rows)
 
-        for metal_name, grp_items in groups.items():
+        for (metal_name, metal_purity), grp_items in groups.items():
             gw_grp = nw_grp = amt_grp = 0.0
 
             for it in grp_items:
@@ -226,7 +226,8 @@ class InvoiceDetailDialog(QDialog):
                 row_idx += 1
 
             # Metal total row — always shown
-            lbl = f"{metal_name} Total"
+            _grp_display = f"{metal_name} ({metal_purity})" if metal_purity and metal_purity != metal_name else metal_name
+            lbl = f"{_grp_display} Total"
             sub_vals = [
                 "", lbl, "", "", "", "",
                 f"{gw_grp:.3f}",
@@ -333,6 +334,14 @@ class InvoiceDetailDialog(QDialog):
         fl = QHBoxLayout(foot)
         fl.setContentsMargins(18, 8, 18, 8)
 
+        btn_preview = QPushButton("👁  Preview PDF")
+        btn_preview.setStyleSheet(
+            "QPushButton{background:#8e44ad;color:white;border-radius:5px;"
+            "padding:9px 20px;font-weight:bold;border:none;}"
+            "QPushButton:hover{background:#7d3c98;}"
+        )
+        btn_preview.clicked.connect(self._preview_pdf)
+
         btn_pdf = QPushButton("🖨  Download PDF")
         btn_pdf.setStyleSheet(
             "QPushButton{background:#f39c12;color:white;border-radius:5px;"
@@ -368,6 +377,7 @@ class InvoiceDetailDialog(QDialog):
         btn_close.clicked.connect(self.accept)
 
         fl.addStretch()
+        fl.addWidget(btn_preview)
         fl.addWidget(btn_pdf)
         fl.addWidget(btn_dup)
         fl.addWidget(btn_edit)
@@ -383,6 +393,10 @@ class InvoiceDetailDialog(QDialog):
         if self._on_duplicate:
             self._on_duplicate(self._invoice)
             self.accept()
+
+    def _preview_pdf(self):
+        from app.printer_helper import preview_invoice_pdf
+        preview_invoice_pdf(self._invoice, parent=self)
 
     def _download_pdf(self):
         from app.printer_helper import save_invoice_as_pdf

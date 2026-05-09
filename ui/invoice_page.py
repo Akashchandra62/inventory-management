@@ -7,9 +7,9 @@ from PyQt5.QtWidgets import (
     QPushButton, QTableWidget, QTableWidgetItem, QMessageBox,
     QGroupBox, QFormLayout, QDoubleSpinBox, QSpinBox,
     QComboBox, QFrame, QScrollArea, QHeaderView, QAbstractItemView,
-    QCompleter, QAbstractSpinBox, QDialog, QDateEdit
+    QCompleter, QAbstractSpinBox, QDialog, QDateEdit, QApplication
 )
-from PyQt5.QtCore import Qt, QEvent, QTimer, QDate
+from PyQt5.QtCore import Qt, QEvent, QTimer, QDate, QPoint, QObject
 from PyQt5.QtGui import QFont, QDoubleValidator
 from PyQt5.QtWidgets import QShortcut
 from PyQt5.QtGui import QKeySequence
@@ -17,7 +17,7 @@ from app.config import AppConfig
 from app.utils import format_currency
 from app.printer_helper import save_invoice_as_pdf
 from services.invoice_service import create_invoice, update_invoice
-from services.customer_service import get_all_customers
+from services.customer_service import get_all_customers, update_customer
 from services.item_catalog_service import (
     get_item_by_code, get_item_by_name, get_names as get_catalog_names, add_catalog_item
 )
@@ -25,6 +25,38 @@ from services.metal_service import get_metals, get_metal_by_id, add_metal as _ad
 
 
 PURITY_OPTIONS = ["22Kt", "18Kt", "14Kt", "92.5", "99.9", "60-70", "Other"]
+
+
+class _EnterNav(QObject):
+    """Enter-key navigation chain for dialog fields.
+    Moves focus field-by-field; calls on_last() when Enter is pressed on the final field.
+    Skips interception while a QCompleter popup is open.
+    """
+    def __init__(self, chain, on_last=None, parent=None):
+        super().__init__(parent)
+        self._nxt = {}
+        for i, w in enumerate(chain):
+            self._nxt[id(w)] = chain[i + 1] if i + 1 < len(chain) else None
+            w.installEventFilter(self)
+        self._on_last = on_last
+
+    def eventFilter(self, obj, event):
+        if event.type() == QEvent.KeyPress and event.key() in (Qt.Key_Return, Qt.Key_Enter):
+            # Don't intercept while an autocomplete popup is showing
+            if hasattr(obj, 'completer') and obj.completer() and obj.completer().popup().isVisible():
+                return False
+            key = id(obj)
+            if key not in self._nxt:
+                return False
+            nxt = self._nxt[key]
+            if nxt is not None:
+                nxt.setFocus()
+                QTimer.singleShot(0, nxt.selectAll if hasattr(nxt, 'selectAll') else lambda: None)
+                return True
+            if self._on_last:
+                self._on_last()
+                return True
+        return False
 
 
 class InvoicePage(QWidget):
@@ -140,6 +172,18 @@ class InvoicePage(QWidget):
 
         # ── Quick-add toolbar ─────────────────────────────────
         qa_bar = QHBoxLayout()
+
+        btn_add_row = QPushButton("➕  Add Row")
+        btn_add_row.setToolTip("Add another item row (Ctrl+D)")
+        btn_add_row.setShortcut("Ctrl+D")
+        btn_add_row.setStyleSheet(
+            "QPushButton{background:#2980b9;color:white;border-radius:4px;"
+            "padding:4px 12px;font-size:11px;font-weight:bold;border:none;}"
+            "QPushButton:hover{background:#2471a3;}"
+        )
+        btn_add_row.clicked.connect(self._append_item_row)
+        qa_bar.addWidget(btn_add_row)
+
         qa_bar.addStretch()
 
         btn_qi = QPushButton("⚡  New Item")
@@ -162,8 +206,83 @@ class InvoicePage(QWidget):
         )
         btn_qm.clicked.connect(self._quick_add_metal)
 
+        btn_shortcuts = QPushButton("⌨  Shortcuts")
+        btn_shortcuts.setFlat(True)
+        btn_shortcuts.setStyleSheet(
+            "QPushButton{color:#7f8c8d;border:1px solid #ced4da;border-radius:4px;"
+            "padding:4px 10px;font-size:11px;background:#f8f9fa;}"
+            "QPushButton:hover{background:#ecf0f1;color:#2c3e50;}"
+        )
+        btn_shortcuts.setToolTip(
+            "Ctrl+D  Add new item row\n"
+            "Ctrl+G  Jump to IGST field\n"
+            "Ctrl+I  Quick-add catalog item\n"
+            "Ctrl+M  Quick-add metal rate"
+        )
+
+        def _show_shortcuts():
+            popup = QDialog(self)
+            popup.setWindowFlags(Qt.Popup | Qt.FramelessWindowHint)
+            popup.setStyleSheet(
+                "QDialog{background:#2c3e50;border:1px solid #1a252f;border-radius:6px;}"
+                "QLabel{background:transparent;color:#ecf0f1;font-size:12px;}"
+            )
+            pl = QVBoxLayout(popup)
+            pl.setContentsMargins(16, 12, 16, 12)
+            pl.setSpacing(8)
+
+            hdr = QLabel("Keyboard Shortcuts")
+            hdr.setFont(QFont("Segoe UI", 10, QFont.Bold))
+            hdr.setStyleSheet("color:#f39c12;font-size:12px;")
+            pl.addWidget(hdr)
+
+            sep = QFrame(); sep.setFrameShape(QFrame.HLine)
+            sep.setStyleSheet("background:#455a64;max-height:1px;border:none;")
+            pl.addWidget(sep)
+
+            for key, desc in [
+                ("Ctrl+D", "Add new item row"),
+                ("Ctrl+G", "Jump to IGST field"),
+                ("Ctrl+I", "Quick-add catalog item"),
+                ("Ctrl+M", "Quick-add metal rate"),
+                ("Enter",  "Move to next field in row"),
+            ]:
+                row = QHBoxLayout(); row.setSpacing(12)
+                k = QLabel(key)
+                k.setFixedWidth(76)
+                k.setAlignment(Qt.AlignCenter)
+                k.setStyleSheet(
+                    "color:#3498db;font-weight:bold;font-size:11px;"
+                    "background:#1a252f;border-radius:3px;padding:1px 4px;"
+                )
+                d = QLabel(desc)
+                row.addWidget(k); row.addWidget(d); row.addStretch()
+                pl.addLayout(row)
+
+            popup.adjustSize()
+            pw = popup.width()
+            ph = popup.height()
+
+            # Right-align popup to the button's right edge, appear below it
+            btn_global = btn_shortcuts.mapToGlobal(QPoint(0, 0))
+            x = btn_global.x() + btn_shortcuts.width() - pw
+            y = btn_global.y() + btn_shortcuts.height() + 4
+
+            # Clamp to screen so it never goes off any edge
+            screen = QApplication.desktop().availableGeometry(btn_shortcuts)
+            x = max(screen.left(), min(x, screen.right() - pw))
+            if y + ph > screen.bottom():
+                y = btn_global.y() - ph - 4   # flip above button if no room below
+            y = max(screen.top(), y)
+
+            popup.move(x, y)
+            popup.show()
+
+        btn_shortcuts.clicked.connect(_show_shortcuts)
+
         qa_bar.addWidget(btn_qi)
         qa_bar.addWidget(btn_qm)
+        qa_bar.addWidget(btn_shortcuts)
         itl.addLayout(qa_bar)
 
         self.tbl_items = QTableWidget()
@@ -495,33 +614,85 @@ class InvoicePage(QWidget):
         self.spn_igst.setFocus()
         self.spn_igst.selectAll()
 
-    # ── Customer Autocomplete ─────────────────────────────────
+    # ── Customer Autocomplete & Auto-update ──────────────────────
     def _setup_customer_autocomplete(self):
         self._customers_cache = get_all_customers()
-        mobiles = [c.get("mobile", "") for c in self._customers_cache if c.get("mobile")]
-        completer = QCompleter(mobiles, self)
-        completer.setCaseSensitivity(Qt.CaseInsensitive)
-        completer.setFilterMode(Qt.MatchContains)
-        self.txt_cmobile.setCompleter(completer)
-        self.txt_cmobile.textChanged.connect(self._autofill_customer)
+        self._selected_customer_id = ""
+        self._rebuild_customer_completers()
+        self.txt_cmobile.textChanged.connect(self._autofill_by_mobile_text)
+        for field in (self.txt_cname, self.txt_cmobile, self.txt_caddr,
+                      self.txt_cemail, self.txt_aadhaar, self.txt_pan):
+            field.editingFinished.connect(self._on_customer_field_edited)
 
-    def _autofill_customer(self, text: str):
+    def _rebuild_customer_completers(self):
+        """Rebuild completers on both mobile and name fields from the current cache."""
+        mobiles = [c.get("mobile", "") for c in self._customers_cache if c.get("mobile")]
+        mob_c = QCompleter(mobiles, self)
+        mob_c.setCaseSensitivity(Qt.CaseInsensitive)
+        mob_c.setFilterMode(Qt.MatchContains)
+        mob_c.activated.connect(self._on_mobile_chosen)
+        self.txt_cmobile.setCompleter(mob_c)
+
+        names = [c.get("customer_name", "") for c in self._customers_cache if c.get("customer_name")]
+        name_c = QCompleter(names, self)
+        name_c.setCaseSensitivity(Qt.CaseInsensitive)
+        name_c.setFilterMode(Qt.MatchContains)
+        name_c.activated.connect(self._on_name_chosen)
+        self.txt_cname.setCompleter(name_c)
+
+    def _autofill_from_customer(self, c: dict):
+        """Fill all customer fields from a record and track the selected customer ID."""
+        self._selected_customer_id = c.get("customer_id", "")
+        for field, val in (
+            (self.txt_cname,   c.get("customer_name", "")),
+            (self.txt_cmobile, c.get("mobile",        "")),
+            (self.txt_caddr,   c.get("address",       "")),
+            (self.txt_cemail,  c.get("email",         "")),
+            (self.txt_aadhaar, c.get("aadhaar",       "")),
+            (self.txt_pan,     c.get("pan",           "")),
+        ):
+            field.blockSignals(True)
+            field.setText(val)
+            field.blockSignals(False)
+
+    def _on_mobile_chosen(self, text: str):
+        text = text.strip()
+        for c in self._customers_cache:
+            if c.get("mobile", "") == text:
+                self._autofill_from_customer(c)
+                return
+
+    def _on_name_chosen(self, text: str):
+        text = text.strip()
+        for c in self._customers_cache:
+            if c.get("customer_name", "") == text:
+                self._autofill_from_customer(c)
+                return
+
+    def _autofill_by_mobile_text(self, text: str):
+        """Real-time exact-match autofill as the user types in the mobile field."""
         text = text.strip()
         if len(text) < 6:
             return
         for c in self._customers_cache:
             if c.get("mobile", "") == text:
-                # Block signals so autofill doesn't re-trigger this slot
-                self.txt_cname.blockSignals(True)
-                self.txt_caddr.blockSignals(True)
-                self.txt_cemail.blockSignals(True)
-                self.txt_cname.setText(c.get("customer_name", ""))
-                self.txt_caddr.setText(c.get("address", ""))
-                self.txt_cemail.setText(c.get("email", ""))
-                self.txt_cname.blockSignals(False)
-                self.txt_caddr.blockSignals(False)
-                self.txt_cemail.blockSignals(False)
-                break
+                self._autofill_from_customer(c)
+                return
+
+    def _on_customer_field_edited(self):
+        """When any customer field loses focus, update the customer record if one is selected."""
+        if not self._selected_customer_id:
+            return
+        update_customer(self._selected_customer_id, {
+            "customer_name": self.txt_cname.text().strip(),
+            "mobile":        self.txt_cmobile.text().strip(),
+            "address":       self.txt_caddr.text().strip(),
+            "email":         self.txt_cemail.text().strip(),
+            "aadhaar":       self.txt_aadhaar.text().strip(),
+            "pan":           self.txt_pan.text().strip(),
+        })
+        self._customers_cache = get_all_customers()
+        self._rebuild_customer_completers()
 
     # ── Inline-table helpers ──────────────────────────────────
     def _append_item_row(self):
@@ -658,11 +829,20 @@ class InvoicePage(QWidget):
         }
         self._row_widgets.append(rd)
 
-        # Enter-key chain: tag→name→huid→purity→gwt→lwt→nwt→qty→rate→mk_spn→other→(new row)
+        # Enter-key chain: tag→name→huid→purity→gwt→lwt→nwt→qty→rate→mk_spn→other→payment
         chain = [w_tag, w_name, w_huid, w_purity, w_gwt, w_lwt, w_nwt, w_qty, w_rate, w_mk_spn, w_other]
         rd['chain'] = chain
         for ci, w in enumerate(chain):
-            if not isinstance(w, QLineEdit):
+            if isinstance(w, QComboBox) and w.isEditable():
+                # Editable QComboBox key events go to its internal QLineEdit, not the
+                # widget itself, so installEventFilter on the combo won't fire. Use
+                # returnPressed on the internal line edit instead.
+                nxt = chain[ci + 1] if ci + 1 < len(chain) else None
+                if nxt:
+                    w.lineEdit().returnPressed.connect(
+                        lambda _nw=nxt: QTimer.singleShot(0, lambda: self._focus_and_select(_nw))
+                    )
+            elif not isinstance(w, QLineEdit):
                 w._item_rd   = rd
                 w._chain_idx = ci
                 w.installEventFilter(self)
@@ -837,7 +1017,7 @@ class InvoicePage(QWidget):
     def eventFilter(self, obj, event):
         """Enter key navigation for item-table rows and payment fields."""
         if event.type() == QEvent.KeyPress and event.key() in (Qt.Key_Return, Qt.Key_Enter):
-            # ── Item table spinbox/combobox chain ───────────────
+            # ── Item table spinbox chain ─────────────────────────
             if hasattr(obj, '_item_rd') and hasattr(obj, '_chain_idx'):
                 rd    = obj._item_rd
                 chain = rd['chain']
@@ -845,11 +1025,13 @@ class InvoicePage(QWidget):
                 if idx + 1 < len(chain):
                     QTimer.singleShot(0, lambda n=chain[idx + 1]: self._focus_and_select(n))
                 else:
+                    # Last item field: if this row has a name, start the next row;
+                    # if the row is empty, move to the payment section instead.
                     if rd['name'].text().strip():
                         QTimer.singleShot(0, self._append_item_row)
                     else:
                         QTimer.singleShot(0, lambda: self._focus_and_select(self.txt_cash))
-                return False   # let the widget commit its value first
+                return True   # consume — spinbox value commits on focusOut
 
             # ── Payment section chain ────────────────────────────
             if hasattr(obj, '_pay_chain') and hasattr(obj, '_pay_idx'):
@@ -1075,6 +1257,7 @@ class InvoicePage(QWidget):
         """Compact dialog: create a catalog item and optionally fill it into this invoice."""
         dlg = QDialog(self)
         dlg.setWindowTitle("Quick Add — New Item")
+        dlg.setWindowFlags(dlg.windowFlags() & ~Qt.WindowContextHelpButtonHint)
         dlg.setMinimumWidth(420)
         dlg.setStyleSheet("QDialog{background:#f5f6fa;}")
         vl = QVBoxLayout(dlg)
@@ -1171,6 +1354,9 @@ class InvoicePage(QWidget):
         btn_row.addWidget(btn_fill); btn_row.addWidget(btn_only); btn_row.addWidget(btn_cancel)
         vl.addLayout(btn_row)
 
+        # Enter: Name → Code → Purity → Rate → "Save & Add to Invoice"
+        _EnterNav([txt_name, txt_code, txt_purity, spn_rate], on_last=lambda: dlg.done(2), parent=dlg)
+
         result = dlg.exec()
         if result == 0:
             return
@@ -1192,9 +1378,11 @@ class InvoicePage(QWidget):
 
         ok = add_catalog_item(name, "", purity, code, "", metal_id, rate, labour)
         if not ok:
+            purity_hint = f" ({purity})" if purity else ""
+            code_hint   = f'\n  or code "{code}" is already taken' if code else ""
             QMessageBox.warning(
                 self, "Duplicate",
-                f'"{name}" already exists, or code "{code}" is already taken.'
+                f'"{name}{purity_hint}" already exists.{code_hint}'
             )
             return
 
@@ -1234,6 +1422,8 @@ class InvoicePage(QWidget):
         """Compact dialog: add a metal / purity / rate entry to the rate card."""
         dlg = QDialog(self)
         dlg.setWindowTitle("Quick Add — Metal Rate")
+        # Remove the Windows "?" help button from the title bar
+        dlg.setWindowFlags(dlg.windowFlags() & ~Qt.WindowContextHelpButtonHint)
         dlg.setMinimumWidth(360)
         dlg.setStyleSheet("QDialog{background:#f5f6fa;}")
         vl = QVBoxLayout(dlg)
@@ -1274,10 +1464,6 @@ class InvoicePage(QWidget):
         spn_rate   = _dspn()
         spn_labour = _dspn()
 
-        # Enter-key navigation inside dialog
-        txt_name.returnPressed.connect(txt_purity.setFocus)
-        txt_purity.returnPressed.connect(spn_rate.setFocus)
-
         fl = QFormLayout(); fl.setSpacing(8)
         fl.addRow(_lbl("Metal Name *"),  txt_name)
         fl.addRow(_lbl("Purity *"),      txt_purity)
@@ -1285,9 +1471,19 @@ class InvoicePage(QWidget):
         fl.addRow(_lbl("Labour (₹/g)"), spn_labour)
         vl.addLayout(fl)
 
+        # Inline error label — hidden until a validation problem occurs
+        err_lbl = QLabel("")
+        err_lbl.setWordWrap(True)
+        err_lbl.setStyleSheet(
+            "color:#e74c3c; font-size:11px; font-weight:600; padding:2px 0;"
+        )
+        err_lbl.hide()
+        vl.addWidget(err_lbl)
+
         btn_row = QHBoxLayout(); btn_row.setSpacing(8)
         btn_save = QPushButton("💾  Save Metal")
         btn_save.setFixedHeight(38)
+        btn_save.setDefault(True)   # Enter key triggers Save from any field
         btn_save.setStyleSheet(
             "QPushButton{background:#16a085;color:white;border-radius:5px;"
             "font-weight:bold;border:none;padding:0 18px;}"
@@ -1299,21 +1495,43 @@ class InvoicePage(QWidget):
             "QPushButton{background:#bdc3c7;color:#2c3e50;border-radius:5px;"
             "border:none;padding:0 14px;}"
         )
-        btn_save.clicked.connect(dlg.accept)
         btn_cancel.clicked.connect(dlg.reject)
         btn_row.addWidget(btn_save); btn_row.addWidget(btn_cancel)
         vl.addLayout(btn_row)
+
+        def _try_save():
+            name_v   = txt_name.text().strip()
+            purity_v = txt_purity.text().strip()
+            if not name_v:
+                err_lbl.setText("Metal Name is required.")
+                err_lbl.show()
+                txt_name.setFocus()
+                return
+            if not purity_v:
+                err_lbl.setText("Purity is required.")
+                err_lbl.show()
+                txt_purity.setFocus()
+                return
+            ok = _add_metal_rec(name_v, purity_v, spn_rate.value(), spn_labour.value())
+            if not ok:
+                err_lbl.setText(
+                    f'"{name_v} – {purity_v}" already exists. '
+                    "Use a different name or purity."
+                )
+                err_lbl.show()
+                return
+            dlg.accept()
+
+        btn_save.clicked.connect(_try_save)
+
+        # Enter: Name → Purity → Rate → Labour → Save
+        _EnterNav([txt_name, txt_purity, spn_rate, spn_labour], on_last=_try_save, parent=dlg)
 
         if dlg.exec() != QDialog.Accepted:
             return
 
         name_v   = txt_name.text().strip()
         purity_v = txt_purity.text().strip()
-        if not name_v or not purity_v:
-            QMessageBox.warning(self, "Validation", "Metal Name and Purity are required.")
-            return
-
-        _add_metal_rec(name_v, purity_v, spn_rate.value(), spn_labour.value())
         QMessageBox.information(
             self, "Saved",
             f'"{name_v} – {purity_v}" added.\n'
@@ -1360,6 +1578,7 @@ class InvoicePage(QWidget):
         # Reset edit-mode state
         self._edit_mode = False
         self._editing_invoice_id = ""
+        self._selected_customer_id = ""
         self._editing_invoice_number = ""
         self._title_lbl.setText("🧾  New Invoice")
         self._btn_save.setText("💾  Save Invoice")
@@ -1420,7 +1639,7 @@ class InvoicePage(QWidget):
             if qd.isValid():
                 self.dte_invoice.setDate(qd)
 
-        # Customer
+        # Customer — fill fields and try to link to a customer record
         self.txt_cmobile.setText(inv.get("customer_mobile", ""))
         self.txt_cname.setText(inv.get("customer_name", ""))
         self.txt_caddr.setText(inv.get("customer_address", ""))
@@ -1428,6 +1647,13 @@ class InvoicePage(QWidget):
         self.txt_cust_gst.setText(inv.get("customer_gst", ""))
         self.txt_aadhaar.setText(inv.get("customer_aadhaar", ""))
         self.txt_pan.setText(inv.get("customer_pan", ""))
+        mobile = inv.get("customer_mobile", "").strip()
+        self._selected_customer_id = ""
+        if mobile:
+            for c in self._customers_cache:
+                if c.get("mobile", "") == mobile:
+                    self._selected_customer_id = c.get("customer_id", "")
+                    break
 
         # Items
         self._reset_items_table()
@@ -1540,10 +1766,6 @@ class InvoicePage(QWidget):
     def refresh(self):
         self._refresh_inv_number()
 
-        # Refresh customer cache + completer so new customers show up
+        # Refresh customer cache + completers so new customers show up
         self._customers_cache = get_all_customers()
-        mobiles = [c.get("mobile", "") for c in self._customers_cache if c.get("mobile")]
-        completer = QCompleter(mobiles, self)
-        completer.setCaseSensitivity(Qt.CaseInsensitive)
-        completer.setFilterMode(Qt.MatchContains)
-        self.txt_cmobile.setCompleter(completer)
+        self._rebuild_customer_completers()

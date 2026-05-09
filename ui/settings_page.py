@@ -1,6 +1,7 @@
 # ============================================================
 # ui/settings_page.py - Tabbed Settings (redesigned)
 # ============================================================
+from __future__ import annotations
 
 import os
 import shutil
@@ -769,9 +770,17 @@ class SettingsPage(QWidget):
             return
 
         if metal:
-            update_metal_rec(metal["id"], name_v, purity_v, spn_rate.value(), spn_labour.value())
+            ok = update_metal_rec(metal["id"], name_v, purity_v, spn_rate.value(), spn_labour.value())
         else:
-            add_metal(name_v, purity_v, spn_rate.value(), spn_labour.value())
+            ok = add_metal(name_v, purity_v, spn_rate.value(), spn_labour.value())
+
+        if not ok:
+            QMessageBox.warning(
+                self, "Duplicate Metal",
+                f'A metal "{name_v} – {purity_v}" already exists.\n'
+                "Please use a different name or purity."
+            )
+            return
 
         self._refresh_metals_table()
         self._rebuild_catalog_categories()   # refresh metal dropdown in Items tab
@@ -853,6 +862,7 @@ class SettingsPage(QWidget):
             "padding:0 8px;font-size:13px;background:white;}"
             "QComboBox::drop-down{border:none;}"
         )
+        self._new_item_cat.currentIndexChanged.connect(self._filter_metals_by_category)
 
         add_row1.addWidget(QLabel("Name *")); add_row1.addWidget(self._new_item_name, 1)
         add_row1.addWidget(QLabel("Code"));   add_row1.addWidget(self._new_item_code)
@@ -944,24 +954,46 @@ class SettingsPage(QWidget):
         return wrap
 
     def _on_new_item_metal_changed(self, idx):
-        metals = get_metals()
-        if idx <= 0 or idx - 1 >= len(metals):
+        metal_id = self._new_item_metal.itemData(idx)
+        if not metal_id:
             self._new_item_purity.clear()
             return
-        m = metals[idx - 1]
-        self._new_item_purity.setText(m.get("purity", ""))
+        all_metals = getattr(self, '_all_metals', None) or get_metals()
+        m = next((x for x in all_metals if x.get('id') == metal_id), None)
+        if m:
+            self._new_item_purity.setText(m.get('purity', ''))
+        else:
+            self._new_item_purity.clear()
 
-    def _rebuild_catalog_categories(self):
-        cats = AppConfig.categories()
-        self._new_item_cat.clear()
-        self._new_item_cat.addItem("(no category)")
-        self._new_item_cat.addItems(cats)
-
-        metals = get_metals()
+    def _filter_metals_by_category(self):
+        """Repopulate the metal dropdown to show only metals whose name matches the selected category."""
+        cat = self._new_item_cat.currentText()
+        all_metals = getattr(self, '_all_metals', None) or get_metals()
+        if cat and cat != "(no category)":
+            filtered = [m for m in all_metals if m.get('name', '').lower() == cat.lower()]
+        else:
+            filtered = all_metals
         self._new_item_metal.blockSignals(True)
         self._new_item_metal.clear()
         self._new_item_metal.addItem("(no metal)")
-        for m in metals:
+        for m in filtered:
+            self._new_item_metal.addItem(f"{m['name']} – {m['purity']}", m.get("id"))
+        self._new_item_metal.blockSignals(False)
+        self._new_item_purity.clear()
+
+    def _rebuild_catalog_categories(self):
+        cats = AppConfig.categories()
+        self._new_item_cat.blockSignals(True)
+        self._new_item_cat.clear()
+        self._new_item_cat.addItem("(no category)")
+        self._new_item_cat.addItems(cats)
+        self._new_item_cat.blockSignals(False)
+
+        self._all_metals = get_metals()
+        self._new_item_metal.blockSignals(True)
+        self._new_item_metal.clear()
+        self._new_item_metal.addItem("(no metal)")
+        for m in self._all_metals:
             self._new_item_metal.addItem(f"{m['name']} – {m['purity']}", m.get("id"))
         self._new_item_metal.blockSignals(False)
 
@@ -1123,8 +1155,10 @@ class SettingsPage(QWidget):
 
         ok = add_catalog_item(name, cat, purity, code, group, metal_id, rate, labour)
         if not ok:
+            purity_hint = f" ({purity})" if purity else ""
+            code_hint   = f'\n  or code "{code}" is already taken' if code else ""
             QMessageBox.warning(self, "Duplicate",
-                f'"{name}" already exists (or the code "{code}" is already taken).')
+                f'"{name}{purity_hint}" already exists.{code_hint}')
             return
         self._new_item_name.clear()
         self._new_item_code.clear()
@@ -1558,11 +1592,29 @@ class SettingsPage(QWidget):
             "QDoubleSpinBox:focus{border:1px solid #3498db;}"
         )
 
-        irow("Invoice Prefix",  self.txt_prefix)
-        irow("Default GST %",   self.spn_default_tax)
-        irow("State",           self.txt_state)
-        irow("State Code",      self.txt_state_code)
-        irow("Jurisdiction",    self.txt_jurisdiction)
+        self.spn_low_stock = QDoubleSpinBox()
+        self.spn_low_stock.setRange(0, 9999)
+        self.spn_low_stock.setDecimals(0)
+        self.spn_low_stock.setValue(5)
+        self.spn_low_stock.setSuffix(" pcs")
+        self.spn_low_stock.setMaximumWidth(120)
+        self.spn_low_stock.setMinimumHeight(34)
+        self.spn_low_stock.setButtonSymbols(QAbstractSpinBox.NoButtons)
+        self.spn_low_stock.setStyleSheet(
+            "QDoubleSpinBox{border:1px solid #ced4da;border-radius:5px;"
+            "padding:0 10px;font-size:13px;background:white;}"
+            "QDoubleSpinBox:focus{border:1px solid #3498db;}"
+        )
+        self.spn_low_stock.setToolTip(
+            "Items with Net Qty at or below this number are highlighted as Low Stock"
+        )
+
+        irow("Invoice Prefix",       self.txt_prefix)
+        irow("Default GST %",        self.spn_default_tax)
+        irow("State",                self.txt_state)
+        irow("State Code",           self.txt_state_code)
+        irow("Jurisdiction",         self.txt_jurisdiction)
+        irow("Low Stock Threshold",  self.spn_low_stock)
         root.addWidget(inv_sec)
 
         # Categories
@@ -1736,6 +1788,7 @@ class SettingsPage(QWidget):
         self.txt_jurisdiction.setText(shop.get("jurisdiction", ""))
         self.txt_prefix.setText(shop.get("invoice_prefix", "JB"))
         self.spn_default_tax.setValue(shop.get("default_tax", 3.0))
+        self.spn_low_stock.setValue(AppConfig.low_stock_threshold())
         self.txt_bank_name.setText(shop.get("bank_name", ""))
         self.txt_acc_name.setText(shop.get("account_name", ""))
         self.txt_acc_no.setText(shop.get("account_number", ""))
@@ -1788,6 +1841,7 @@ class SettingsPage(QWidget):
             "terms":          self.txt_terms.toPlainText().strip(),
         }
         if AppConfig.save_shop(data):
+            AppConfig.save_low_stock_threshold(int(self.spn_low_stock.value()))
             AppConfig.load()
             QMessageBox.information(self, "Saved", "Settings saved successfully!")
         else:

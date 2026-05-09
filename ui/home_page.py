@@ -222,7 +222,7 @@ class HomePage(QWidget):
         self._all_stock     = get_all_stock()
         self._all_vendors   = get_all_vendors()
         self._all_customers = get_all_customers()
-        self._all_low_stock = get_low_stock()
+        self._all_low_stock = get_low_stock(AppConfig.low_stock_threshold())
 
         today_str = date.today().isoformat()
         today_inv = [i for i in self._all_invoices if i.get("date") == today_str]

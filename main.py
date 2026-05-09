@@ -36,9 +36,9 @@ if sys.platform == "win32":
 
 # ── Safe to import PyQt5 now ─────────────────────────────────
 import logging
-from PyQt5.QtWidgets import QApplication, QMessageBox, QPushButton
+from PyQt5.QtWidgets import QApplication, QMessageBox, QPushButton, QLineEdit, QAbstractSpinBox
 from PyQt5.QtGui import QFont
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QObject, QEvent, QTimer
 
 # Globally transform all QPushButtons to have the pointing hand cursor on hover
 _orig_btn_init = QPushButton.__init__
@@ -46,6 +46,14 @@ def _patched_btn_init(self, *args, **kwargs):
     _orig_btn_init(self, *args, **kwargs)
     self.setCursor(Qt.PointingHandCursor)
 QPushButton.__init__ = _patched_btn_init
+
+
+class _SelectAllOnFocus(QObject):
+    """Select all text whenever a QLineEdit or spin-box gains focus."""
+    def eventFilter(self, obj, event):
+        if event.type() == QEvent.FocusIn and isinstance(obj, (QLineEdit, QAbstractSpinBox)):
+            QTimer.singleShot(0, obj.selectAll)
+        return False
 
 from app.constants import APP_NAME
 
@@ -105,6 +113,9 @@ def main():
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
     app.setFont(QFont("Segoe UI", 10))
+
+    _select_all_filter = _SelectAllOnFocus(app)
+    app.installEventFilter(_select_all_filter)
 
     # ── Profile Selection ─────────────────────────────────────
     # Must happen BEFORE any data-path-dependent module is imported.

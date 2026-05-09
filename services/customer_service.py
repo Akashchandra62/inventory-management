@@ -1,61 +1,83 @@
 # services/customer_service.py
-from app.file_manager import safe_read, safe_write
-from app.constants import CUSTOMERS_FILE
 from app.utils import unique_id
-from models.customer_model import CustomerModel
 
 
 def get_all_customers() -> list:
-    return safe_read(CUSTOMERS_FILE) or []
+    from app.database import get_db
+    with get_db() as conn:
+        rows = conn.execute("SELECT * FROM customers ORDER BY customer_name").fetchall()
+    return [dict(r) for r in rows]
 
 
-def save_all_customers(data: list) -> bool:
-    return safe_write(CUSTOMERS_FILE, data)
+def find_or_create_customer(
+    name: str, mobile: str,
+    address: str = "", email: str = "",
+    aadhaar: str = "", pan: str = "",
+) -> str:
+    """Return customer_id; create record if not found by mobile."""
+    from app.database import get_db
+    with get_db() as conn:
+        if mobile:
+            row = conn.execute(
+                "SELECT customer_id, email, aadhaar, pan FROM customers WHERE mobile = ?",
+                (mobile,),
+            ).fetchone()
+            if row:
+                updates = {}
+                if email   and not row["email"]:   updates["email"]   = email
+                if aadhaar and not row["aadhaar"]: updates["aadhaar"] = aadhaar
+                if pan     and not row["pan"]:     updates["pan"]     = pan
+                if updates:
+                    set_clause = ", ".join(f"{k} = ?" for k in updates)
+                    conn.execute(
+                        f"UPDATE customers SET {set_clause} WHERE mobile = ?",
+                        (*updates.values(), mobile),
+                    )
+                return row["customer_id"]
 
-
-def find_or_create_customer(name: str, mobile: str, address: str = "", email: str = "") -> str:
-    """Return customer_id; create if not found."""
-    customers = get_all_customers()
-    for c in customers:
-        if c.get("mobile") == mobile and mobile:
-            # Optionally update email if it was missing 
-            if email and not c.get("email"):
-                c["email"] = email
-                save_all_customers(customers)
-            return c.get("customer_id", "")
-    
-    # Create new
-    cust_dict = {
-        "customer_id": unique_id(),
-        "customer_name": name,
-        "mobile": mobile,
-        "address": address,
-        "email": email
-    }
-    customers.append(cust_dict)
-    save_all_customers(customers)
-    return cust_dict["customer_id"]
+        # Create new customer
+        cid = unique_id()
+        conn.execute(
+            "INSERT INTO customers "
+            "(customer_id, customer_name, mobile, address, email, aadhaar, pan) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (cid, name, mobile, address, email, aadhaar, pan),
+        )
+        return cid
 
 
 def update_customer(customer_id: str, updated: dict) -> bool:
-    customers = get_all_customers()
-    for i, c in enumerate(customers):
-        if c.get("customer_id") == customer_id:
-            customers[i].update(updated)
-            return save_all_customers(customers)
-    return False
+    from app.database import get_db
+    fields = {k: v for k, v in updated.items() if k != "customer_id"}
+    if not fields:
+        return False
+    set_clause = ", ".join(f"{k} = ?" for k in fields)
+    try:
+        with get_db() as conn:
+            result = conn.execute(
+                f"UPDATE customers SET {set_clause} WHERE customer_id = ?",
+                (*fields.values(), customer_id),
+            )
+        return result.rowcount > 0
+    except Exception:
+        return False
 
 
 def delete_customer(customer_id: str) -> bool:
-    customers = get_all_customers()
-    new = [c for c in customers if c.get("customer_id") != customer_id]
-    return save_all_customers(new)
+    from app.database import get_db
+    with get_db() as conn:
+        result = conn.execute(
+            "DELETE FROM customers WHERE customer_id = ?", (customer_id,)
+        )
+    return result.rowcount > 0
 
 
 def search_customers(query: str) -> list:
-    query = query.lower()
-    return [
-        c for c in get_all_customers()
-        if query in c.get("customer_name", "").lower()
-        or query in c.get("mobile", "")
-    ]
+    from app.database import get_db
+    q = f"%{query.lower()}%"
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM customers WHERE LOWER(customer_name) LIKE ? OR mobile LIKE ?",
+            (q, q),
+        ).fetchall()
+    return [dict(r) for r in rows]

@@ -141,9 +141,11 @@ class StockEntryPage(QWidget):
         self._entries: list[dict] = []
         self._filtered: list[dict] = []
         self._metals: list[dict] = []
+        self._metal_disp_map: dict = {}   # display_str → metal dict
         self._sort_col: int = -1
         self._sort_asc: bool = True
         self._build_ui()
+        self.metal.currentIndexChanged.connect(self._on_metal_changed)
 
     # ──────────────────────────────────────────────────────
     #  Master layout
@@ -207,50 +209,38 @@ class StockEntryPage(QWidget):
         # ── IN section ────────────────────────────────────
         g.addWidget(_sep_label("─  Stock IN Details  ─", _SEC_LBL_IN), 3, 0, 1, 4)
 
-        self.in_dabba_name = _line("Box / dabba label")
-        self.in_dabba_wt   = _dspn(3)
-        row(4, "Dabba Name", self.in_dabba_name, "Dabba Wt (g)", self.in_dabba_wt,
-            _SEC_LBL_IN, _SEC_LBL_IN)
-
-        self.in_gross_wt   = _dspn(3)
-        self.in_plastic_wt = _dspn(3)
+        self.in_gross_wt = _dspn(3)
+        self.in_less_wt  = _dspn(3)
         self.in_gross_wt.valueChanged.connect(self._sync_net_wt)
-        self.in_plastic_wt.valueChanged.connect(self._sync_net_wt)
-        row(5, "Gross Wt (g)", self.in_gross_wt, "Plastic Wt (g)", self.in_plastic_wt,
-            _SEC_LBL_IN, _SEC_LBL_IN)
-
-        self.in_qty     = _ispn(0)
-        self.in_less_wt = _dspn(3)
         self.in_less_wt.valueChanged.connect(self._sync_net_wt)
-        row(6, "Qtrn In", self.in_qty, "Less Wt (g)", self.in_less_wt,
+        row(4, "Gross Wt (g)", self.in_gross_wt, "Less Wt (g)", self.in_less_wt,
             _SEC_LBL_IN, _SEC_LBL_IN)
 
-        self.in_dia_wt = _dspn(3)
+        self.in_qty    = _ispn(0)
         self.in_net_wt = _dspn(3, readonly=True)
-        self.in_dia_wt.valueChanged.connect(self._sync_net_wt)
-        row(7, "Dia Wt (g)", self.in_dia_wt, "Net Wt (g)", self.in_net_wt,
+        row(5, "Qty In", self.in_qty, "Net Wt (g)", self.in_net_wt,
             _SEC_LBL_IN, _SEC_LBL_IN)
 
         self.in_location = _cmb(LOCATION_OPTIONS, editable=True)
-        row(8, "Location", self.in_location, s0=_SEC_LBL_IN)
+        row(6, "Location", self.in_location, s0=_SEC_LBL_IN)
 
         # ── OUT section ───────────────────────────────────
-        g.addWidget(_sep_label("─  Stock OUT Details  ─", _SEC_LBL_OUT), 9, 0, 1, 4)
+        g.addWidget(_sep_label("─  Stock OUT Details  ─", _SEC_LBL_OUT), 7, 0, 1, 4)
 
         self.out_gross_wt = _dspn(3)
         self.out_net_wt   = _dspn(3)
-        row(10, "Gross Wt (g)", self.out_gross_wt, "Net Wt (g)", self.out_net_wt,
+        row(8, "Gross Wt (g)", self.out_gross_wt, "Net Wt (g)", self.out_net_wt,
             _SEC_LBL_OUT, _SEC_LBL_OUT)
 
         self.out_qty = _ispn(0)
-        row(11, "Qty Out", self.out_qty, s0=_SEC_LBL_OUT)
+        row(9, "Qty Out", self.out_qty, s0=_SEC_LBL_OUT)
 
         # ── Footer ────────────────────────────────────────
-        g.addWidget(_sep_label("", ""), 12, 0, 1, 4)
+        g.addWidget(_sep_label("", ""), 10, 0, 1, 4)
 
         self.remarks = _line("Remarks (optional)")
-        row(13, "Remarks", self.remarks)
-        g.addWidget(self.remarks, 13, 1, 1, 3)
+        row(11, "Remarks", self.remarks)
+        g.addWidget(self.remarks, 11, 1, 1, 3)
 
         btn_save = QPushButton("💾  Save Entry")
         btn_save.setFixedHeight(38)
@@ -260,7 +250,7 @@ class StockEntryPage(QWidget):
             "QPushButton:hover{background:#2471a3;}"
         )
         btn_save.clicked.connect(self._save_entry)
-        g.addWidget(btn_save, 14, 0, 1, 4)
+        g.addWidget(btn_save, 12, 0, 1, 4)
 
         g.setColumnStretch(1, 1)
         g.setColumnStretch(3, 1)
@@ -279,13 +269,9 @@ class StockEntryPage(QWidget):
             self.item,
             self.subname,
             self.purity,
-            self.in_dabba_name,
-            self.in_dabba_wt,
             self.in_gross_wt,
-            self.in_plastic_wt,
-            self.in_qty,
             self.in_less_wt,
-            self.in_dia_wt,
+            self.in_qty,
             self.in_location,
             self.out_gross_wt,
             self.out_net_wt,
@@ -432,14 +418,12 @@ class StockEntryPage(QWidget):
         hdr.setCursor(Qt.PointingHandCursor)
 
     # ──────────────────────────────────────────────────────
-    #  Net Wt auto-calc: gross - plastic - less_wt - dia_wt
+    #  Net Wt auto-calc: gross - less_wt
     # ──────────────────────────────────────────────────────
     def _sync_net_wt(self):
         net = max(0.0, round(
             self.in_gross_wt.value()
-            - self.in_plastic_wt.value()
-            - self.in_less_wt.value()
-            - self.in_dia_wt.value(), 3
+            - self.in_less_wt.value(), 3
         ))
         self.in_net_wt.blockSignals(True)
         self.in_net_wt.setValue(net)
@@ -486,18 +470,15 @@ class StockEntryPage(QWidget):
             "entry_type":   entry_type,
             "voucher_no":   v_no,
             "voucher_date": self.voucher_date.date().toString("yyyy-MM-dd"),
-            "metal_type":   self.metal.currentText(),
+            "metal_type":   (self._metal_disp_map.get(self.metal.currentText(), {})
+                             .get("name", self.metal.currentText())),
             "item_name":    item,
             "sub_name":     self.subname.text().strip(),
             "purity":       self.purity.currentText(),
             # IN fields
-            "dabba_name":   self.in_dabba_name.text().strip(),
-            "dabba_wt":     self.in_dabba_wt.value(),
             "gross_wt":     self.in_gross_wt.value(),
-            "plastic_wt":   self.in_plastic_wt.value(),
             "qty_in":       self.in_qty.value(),
             "less_wt":      self.in_less_wt.value(),
-            "dia_wt":       self.in_dia_wt.value(),
             "net_wt":       self.in_net_wt.value(),
             "location":     self.in_location.currentText() if entry_type == "IN" else "OUT",
             # OUT fields
@@ -643,21 +624,46 @@ class StockEntryPage(QWidget):
     # ──────────────────────────────────────────────────────
     #  Reload helpers
     # ──────────────────────────────────────────────────────
+    @staticmethod
+    def _metal_display(m: dict) -> str:
+        name   = m.get("name",   "")
+        purity = m.get("purity", "")
+        return f"{name} {purity}".strip() if purity else name
+
     def _reload_metals(self):
         self._metals = get_metals()
-        names = [""] + [m.get("name", "") for m in self._metals]
-        curr = self.metal.currentText()
+        self._metal_disp_map = {self._metal_display(m): m for m in self._metals}
+
+        curr_disp = self.metal.currentText()
         self.metal.blockSignals(True)
-        self.metal.clear(); self.metal.addItems(names)
-        self.metal.setCurrentIndex(max(0, self.metal.findText(curr)))
+        self.metal.clear()
+        self.metal.addItem("")
+        for m in self._metals:
+            self.metal.addItem(self._metal_display(m))
+        self.metal.setCurrentIndex(max(0, self.metal.findText(curr_disp)))
         self.metal.blockSignals(False)
 
+        # Filter combo keeps just metal names (matches stored metal_type values)
         fc = self.f_metal.currentText()
         self.f_metal.blockSignals(True)
         self.f_metal.clear(); self.f_metal.addItem("All")
         for m in self._metals: self.f_metal.addItem(m.get("name", ""))
         self.f_metal.setCurrentIndex(max(0, self.f_metal.findText(fc)))
         self.f_metal.blockSignals(False)
+
+    def _on_metal_changed(self):
+        """Auto-fill the Purity field when a metal is selected from the dropdown."""
+        m = self._metal_disp_map.get(self.metal.currentText())
+        if not m:
+            return
+        purity = m.get("purity", "")
+        if not purity:
+            return
+        idx = self.purity.findText(purity)
+        if idx >= 0:
+            self.purity.setCurrentIndex(idx)
+        else:
+            self.purity.setCurrentText(purity)
 
     def _reload_purity_filter(self):
         purities = sorted({e.get("purity", "") for e in self._entries if e.get("purity")})
@@ -735,9 +741,11 @@ class StockEntryPage(QWidget):
         mid = cat.get("metal_id", "")
         if mid:
             for m in self._metals:
-                if m.get("id") == mid:
-                    idx = self.metal.findText(m.get("name", ""))
-                    if idx >= 0: self.metal.setCurrentIndex(idx)
+                if m.get("metal_id") == mid or m.get("id") == mid:
+                    disp = self._metal_display(m)
+                    idx  = self.metal.findText(disp)
+                    if idx >= 0:
+                        self.metal.setCurrentIndex(idx)
                     break
 
     # ──────────────────────────────────────────────────────
@@ -748,9 +756,7 @@ class StockEntryPage(QWidget):
         self.metal.setCurrentIndex(0)
         self.purity.setCurrentIndex(0)
         self.voucher_date.setDate(QDate.currentDate())
-        self.in_dabba_name.clear()
-        for spn in (self.in_dabba_wt, self.in_gross_wt, self.in_plastic_wt,
-                    self.in_less_wt, self.in_dia_wt, self.in_net_wt):
+        for spn in (self.in_gross_wt, self.in_less_wt, self.in_net_wt):
             spn.blockSignals(True); spn.setValue(0.0); spn.blockSignals(False)
         self.in_qty.setValue(0)
         self.in_location.setCurrentIndex(0)

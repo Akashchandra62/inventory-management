@@ -118,7 +118,7 @@ class StockReportPage(QWidget):
         self.cmb_metal = QComboBox()
         self.cmb_metal.setFixedHeight(30)
         self.cmb_metal.setMinimumWidth(110)
-        self.cmb_metal.currentTextChanged.connect(self._refilter)
+        self.cmb_metal.currentTextChanged.connect(self._on_metal_changed)
         row2.addWidget(self.cmb_metal)
 
         row2.addWidget(self._lbl("Purity:"))
@@ -223,17 +223,40 @@ class StockReportPage(QWidget):
     #  Rebuild Metal / Purity combo options
     # ──────────────────────────────────────────────────────
     def _rebuild_combos(self):
-        metals   = sorted({e.get("metal_type","") for e in self._entries if e.get("metal_type")})
-        purities = sorted({e.get("purity","")     for e in self._entries if e.get("purity")})
+        metals = sorted({e.get("metal_type", "") for e in self._entries if e.get("metal_type")})
+        curr_metal = self.cmb_metal.currentText()
+        self.cmb_metal.blockSignals(True)
+        self.cmb_metal.clear()
+        self.cmb_metal.addItem("All")
+        self.cmb_metal.addItems(metals)
+        idx = self.cmb_metal.findText(curr_metal)
+        self.cmb_metal.setCurrentIndex(idx if idx >= 0 else 0)
+        self.cmb_metal.blockSignals(False)
+        # Purity options depend on selected metal
+        self._update_purity_combo(self.cmb_metal.currentText())
 
-        for cmb, options in ((self.cmb_metal, metals), (self.cmb_purity, purities)):
-            curr = cmb.currentText()
-            cmb.blockSignals(True)
-            cmb.clear(); cmb.addItem("All")
-            cmb.addItems(options)
-            idx = cmb.findText(curr)
-            cmb.setCurrentIndex(idx if idx >= 0 else 0)
-            cmb.blockSignals(False)
+    def _update_purity_combo(self, metal_text: str):
+        """Repopulate the Purity combo to only show purities for the selected metal."""
+        if metal_text and metal_text != "All":
+            purities = sorted({
+                e.get("purity", "") for e in self._entries
+                if e.get("metal_type", "") == metal_text and e.get("purity")
+            })
+        else:
+            purities = sorted({e.get("purity", "") for e in self._entries if e.get("purity")})
+        curr = self.cmb_purity.currentText()
+        self.cmb_purity.blockSignals(True)
+        self.cmb_purity.clear()
+        self.cmb_purity.addItem("All")
+        self.cmb_purity.addItems(purities)
+        idx = self.cmb_purity.findText(curr)
+        self.cmb_purity.setCurrentIndex(idx if idx >= 0 else 0)
+        self.cmb_purity.blockSignals(False)
+
+    def _on_metal_changed(self, metal_text: str):
+        """When metal filter changes, update purity options then refilter."""
+        self._update_purity_combo(metal_text)
+        self._refilter()
 
     # ──────────────────────────────────────────────────────
     #  Button actions

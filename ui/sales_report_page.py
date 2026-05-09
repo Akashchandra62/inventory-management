@@ -329,6 +329,7 @@ class SalesReportPage(QWidget):
         act.addStretch()
 
         for label, color, hover, slot in [
+            ("👁 Preview",   "#8e44ad", "#7d3c98", self._preview),
             ("Print / PDF",  "#f39c12", "#e67e22", self._reprint),
             ("Export Excel", "#1e8449", "#196f3d", self._export_excel),
             ("Export CSV",   "#2980b9", "#2471a3", self._export_csv),
@@ -626,6 +627,14 @@ class SalesReportPage(QWidget):
         row = self.tbl.currentRow()
         if 0 <= row < len(self._flat_rows):
             self.duplicate_invoice_requested.emit(self._flat_rows[row]["_inv"])
+
+    def _preview(self):
+        row = self.tbl.currentRow()
+        if row < 0 or row >= len(self._flat_rows):
+            QMessageBox.information(self, "Preview", "Select a row first.")
+            return
+        from app.printer_helper import preview_invoice_pdf
+        preview_invoice_pdf(self._flat_rows[row]["_inv"], parent=self)
 
     def _reprint(self):
         row = self.tbl.currentRow()
