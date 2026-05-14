@@ -83,7 +83,7 @@ def amount_in_words(amount: float) -> str:
 
 
 # ── Public entry points ───────────────────────────────────────
-def save_invoice_as_pdf(invoice: dict, parent=None):
+def save_invoice_as_pdf(invoice: dict, parent=None, copy_type: str = "Original Copy"):
     try:
         inv_num      = invoice.get("invoice_number", "invoice").replace("/", "-")
         default_name = f"Invoice_{inv_num}.pdf"
@@ -92,21 +92,23 @@ def save_invoice_as_pdf(invoice: dict, parent=None):
         )
         if not path:
             return
-        _generate_pdf(invoice, path)
+        _generate_pdf(invoice, path, copy_type)
         QMessageBox.information(parent, "Invoice Saved", f"Invoice saved as PDF:\n{path}")
-        os.startfile(path)
+        try:
+            os.startfile(path)
+        except OSError:
+            pass  # No PDF viewer installed — file is saved, user can open it manually
     except Exception as e:
         traceback.print_exc()
         QMessageBox.critical(parent, "Error", f"Could not generate invoice:\n{str(e)}")
 
 
 def preview_invoice_pdf(invoice: dict, parent=None):
-    """Generate PDF to a temp preview file and open it immediately — no save dialog."""
+    """Generate PDF to a unique temp file and open it — avoids file-lock errors on Windows."""
     try:
-        from app.constants import INVOICES_PRINT
-        os.makedirs(INVOICES_PRINT, exist_ok=True)
         inv_num = invoice.get("invoice_number", "preview").replace("/", "-")
-        path = os.path.join(INVOICES_PRINT, f"preview_{inv_num}.pdf")
+        fd, path = tempfile.mkstemp(prefix="preview_{}_".format(inv_num), suffix=".pdf")
+        os.close(fd)
         _generate_pdf(invoice, path)
         os.startfile(path)
     except Exception as e:
@@ -154,7 +156,7 @@ def _make_bis_box(size: float, bc):
 
 
 # ── Core PDF builder ─────────────────────────────────────────
-def _generate_pdf(invoice: dict, path: str):
+def _generate_pdf(invoice: dict, path: str, copy_type: str = "Original Copy"):
     _tmp_files = []   # temp PNGs rendered via Qt — cleaned up after build
 
     from reportlab.lib.pagesizes import A4
@@ -246,6 +248,7 @@ def _generate_pdf(invoice: dict, path: str):
     advance_paid     = float(invoice.get("advance_paid",  0))
     refund_amount    = float(invoice.get("refund_amount", 0))
     refund_mode      = invoice.get("refund_mode",         "")
+    due_amount       = float(invoice.get("due_amount",    0))
     notes            = invoice.get("notes",               "")
 
     # ── Page layout constants ──────────────────────────────────
@@ -447,7 +450,7 @@ def _generate_pdf(invoice: dict, path: str):
     meta_tbl = Table(
         [[P("<b>INVOICE DATE :</b>", size=8), P(inv_date,        size=8, align=TA_RIGHT)],
          [P("<b>INVOICE NO. :-</b>", size=8), P(inv_number,      size=8, align=TA_RIGHT)],
-         [P(f"<b>{state_str}</b>",   size=7), P("Original Copy", size=7,
+         [P(f"<b>{state_str}</b>",   size=7), P(copy_type, size=7,
                                                  italic=True, align=TA_RIGHT)]],
         colWidths=[MW * 0.55, MW * 0.45]
     )
@@ -720,6 +723,8 @@ def _generate_pdf(invoice: dict, path: str):
     # Round-off is always subtracted from the total (stored as a positive value)
     round_off_str = f"- {round_off:.2f}" if round_off != 0 else "0.00"
     _net_payable  = round(grand_total - round_off, 2)
+    _total_paid_pdf = cash_paid + upi_paid + card_paid + cheque_paid + old_purchase + advance_paid
+    _excess_paid  = round(_total_paid_pdf - _net_payable, 2) if _total_paid_pdf > _net_payable else 0.0
 
     def srow(lbl, val, bold=False, currency=True):
         sz = 9 if bold else 8
@@ -734,20 +739,25 @@ def _generate_pdf(invoice: dict, path: str):
         _ps(size=7, align=TA_CENTER, leading=11)
     )
 
-    sum_rows = [
-        srow('Gross Amount',         f"{subtotal:,.2f}"),
-        srow(f'CGST @ {cgst_pct}%', f"{cgst_amt:.2f}"),
-        srow(f'SGST @ {sgst_pct}%', f"{sgst_amt:.2f}"),
-    ]
+    sum_rows = [srow('Gross Amount', f"{subtotal:,.2f}")]
     if igst_pct > 0:
         sum_rows.append(srow(f'IGST @ {igst_pct}%', f"{igst_amt:.2f}"))
+    else:
+        if cgst_pct > 0:
+            sum_rows.append(srow(f'CGST @ {cgst_pct}%', f"{cgst_amt:.2f}"))
+        if sgst_pct > 0:
+            sum_rows.append(srow(f'SGST @ {sgst_pct}%', f"{sgst_amt:.2f}"))
     sum_rows += [
         srow('Amt After GST', f"{amt_after_gst:.2f}"),
         srow('Round Off',     round_off_str, currency=False),
         srow('Net Payable',   f"{_net_payable:,.2f}", bold=True),
-        [sig_p, '', ''],
     ]
-    net_idx = len(sum_rows) - 2
+    net_idx = len(sum_rows) - 1
+    if due_amount > 0:
+        sum_rows.append(srow('Due Amount', f"{due_amount:,.2f}"))
+    if _excess_paid > 0:
+        sum_rows.append(srow('Extra Paid', f"{_excess_paid:,.2f}"))
+    sum_rows.append([sig_p, '', ''])
     sig_idx = len(sum_rows) - 1
 
     r1, r2, r3 = RW * 0.48, RW * 0.06, RW * 0.46
@@ -867,13 +877,13 @@ def _generate_pdf(invoice: dict, path: str):
 
 
 # ── Print via Qt (preview or direct) ─────────────────────────
-def print_invoice(invoice: dict, parent=None, preview=True):
+def print_invoice(invoice: dict, parent=None, copy_type: str = "Original Copy"):
     try:
         from PyQt5.QtPrintSupport import QPrinter, QPrintPreviewDialog, QPrintDialog
         from PyQt5.QtGui import QTextDocument
         from PyQt5.QtCore import QSizeF
 
-        html = _build_html_preview(invoice)
+        html = _build_html_preview(invoice, copy_type)
         doc  = QTextDocument()
         doc.setHtml(html)
         doc.setPageSize(QSizeF(595, 842))
@@ -881,15 +891,9 @@ def print_invoice(invoice: dict, parent=None, preview=True):
         printer = QPrinter(QPrinter.HighResolution)
         printer.setPageSize(QPrinter.A4)
 
-        if preview:
-            dialog = QPrintPreviewDialog(printer, parent)
-            dialog.setWindowTitle("Invoice Print Preview")
-            dialog.paintRequested.connect(doc.print)
-            dialog.exec()
-        else:
-            dialog = QPrintDialog(printer, parent)
-            if dialog.exec() == QPrintDialog.Accepted:
-                doc.print(printer)
+        dialog = QPrintDialog(printer, parent)
+        if dialog.exec() == QPrintDialog.Accepted:
+            doc.print_(printer)
 
     except Exception:
         traceback.print_exc()
@@ -902,8 +906,13 @@ def print_invoice(invoice: dict, parent=None, preview=True):
             save_invoice_as_pdf(invoice, parent)
 
 
-def _build_html_preview(invoice: dict) -> str:
-    """Minimal HTML for Qt print preview — mirrors the reference layout."""
+def build_html_preview(invoice: dict, copy_type: str = "Original Copy") -> str:
+    """Public entry point — returns full HTML string for the invoice preview dialog."""
+    return _build_html_preview(invoice, copy_type)
+
+
+def _build_html_preview(invoice: dict, copy_type: str = "Original Copy") -> str:
+    """HTML invoice — rendered in QWebEngineView or QTextBrowser."""
     from collections import OrderedDict as _OD
     shop     = AppConfig.shop()
     items    = invoice.get("items", [])
@@ -1001,6 +1010,28 @@ def _build_html_preview(invoice: dict) -> str:
         f'<span>&#x20B9; {igst_amt:.2f}</span></div>'
         if igst_pct > 0 else ''
     )
+    if igst_pct > 0:
+        _tax_rows_html = _igst_row_html
+    else:
+        _tax_rows_html = (
+            f'<div class="srow"><span>CGST @ {cgst_pct}%</span>'
+            f'<span>&#x20B9; {cgst_amt:.2f}</span></div>'
+            f'<div class="srow"><span>SGST @ {sgst_pct}%</span>'
+            f'<span>&#x20B9; {sgst_amt:.2f}</span></div>'
+        )
+    _due_h = float(invoice.get("due_amount", 0))
+    _net_h = round(grand - round_off, 2)
+    _tp_excess_h = _tp_h - _net_h if _tp_h > _net_h else 0.0
+    _due_row_html = (
+        f'<div class="srow" style="color:#c0392b;font-weight:bold">'
+        f'<span>Due Amount</span><span>&#x20B9; {_due_h:,.2f}</span></div>'
+        if _due_h > 0 else ''
+    )
+    _excess_row_html = (
+        f'<div class="srow" style="color:#27ae60;font-weight:bold">'
+        f'<span>Extra Paid</span><span>&#x20B9; {_tp_excess_h:,.2f}</span></div>'
+        if _tp_excess_h > 0 else ''
+    )
     _refund_row_html = ''
     if _refund_h > 0:
         _ref_lbl = f"Refund Given ({_refund_mode_h})" if _refund_mode_h else "Refund Given"
@@ -1086,7 +1117,7 @@ def _build_html_preview(invoice: dict) -> str:
       <div class="r"><span><b>INVOICE NO. :-</b></span><span>{invoice.get('invoice_number','')}</span></div>
       <div class="r" style="font-size:10px;margin-top:4px;border-top:1px solid #ccc;padding-top:3px">
         <span><b>{shop.get('state','')}</b></span>
-        <span style="font-style:italic;color:#555">Original Copy</span>
+        <span style="font-style:italic;color:#555">{copy_type}</span>
       </div>
     </div>
   </div>
@@ -1127,12 +1158,12 @@ def _build_html_preview(invoice: dict) -> str:
     </div>
     <div class="right-bot">
       <div class="srow"><span>Gross Amount</span><span>&#x20B9; {subtotal:,.2f}</span></div>
-      <div class="srow"><span>CGST @ {cgst_pct}%</span><span>&#x20B9; {cgst_amt:.2f}</span></div>
-      <div class="srow"><span>SGST @ {sgst_pct}%</span><span>&#x20B9; {sgst_amt:.2f}</span></div>
-      {_igst_row_html}
+      {_tax_rows_html}
       <div class="srow"><span>Amt After GST</span><span>&#x20B9; {subtotal+cgst_amt+sgst_amt+igst_amt:.2f}</span></div>
       <div class="srow"><span>Round Off</span><span>{r_off}</span></div>
       <div class="srow net"><span>Net Payable</span><span>&#x20B9; {grand - round_off:,.2f}</span></div>
+      {_due_row_html}
+      {_excess_row_html}
       <div class="sig">________________________<br/>Customer's Signature</div>
     </div>
   </div>

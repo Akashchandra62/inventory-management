@@ -125,7 +125,7 @@ class StockPage(QWidget):
 
         self._lbl_low_count = QLabel("")
         self._lbl_low_count.setStyleSheet(
-            "color:#e74c3c; font-size:11px; font-weight:bold; padding:0 4px;"
+            "font-size:11px; font-weight:bold; padding:0 4px;"
         )
         fr.addWidget(self._lbl_low_count)
 
@@ -219,9 +219,12 @@ class StockPage(QWidget):
             1 for i in data
             if self._qty_tracked(i) and i.get("current_qty", 0) <= threshold
         )
-        self._lbl_low_count.setText(
-            f"⚠️ {low_count} low" if low_count else ""
-        )
+        if low_count:
+            self._lbl_low_count.setText(f"⚠️  {low_count} item{'s' if low_count != 1 else ''} with low quantity")
+            self._lbl_low_count.setStyleSheet("color:#e74c3c; font-size:11px; font-weight:bold; padding:0 4px;")
+        else:
+            self._lbl_low_count.setText("✅  All items sufficiently stocked")
+            self._lbl_low_count.setStyleSheet("color:#27ae60; font-size:11px; font-weight:bold; padding:0 4px;")
 
         if self._low_stock_only:
             data = [i for i in data

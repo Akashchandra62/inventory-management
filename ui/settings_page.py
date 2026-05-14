@@ -17,7 +17,8 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import (
     Qt, pyqtSignal, QPropertyAnimation, QEasingCurve,
-    QPoint, QSize, QRect, QMimeData, QByteArray, QTimer
+    QPoint, QSize, QRect, QMimeData, QByteArray, QTimer,
+    QObject, QEvent
 )
 from PyQt5.QtGui import (
     QFont, QPixmap, QPainter, QPen, QColor, QPainterPath,
@@ -701,7 +702,7 @@ class SettingsPage(QWidget):
                 "border-radius:4px;font-weight:bold;font-size:12px;}"
                 "QPushButton:hover{background:#e74c3c;color:white;}"
             )
-            btn_d.clicked.connect(lambda _, mid=m.get("id"): self._delete_metal(mid))
+            btn_d.clicked.connect(lambda _, mid=m.get("metal_id"): self._delete_metal(mid))
             act_l.addWidget(btn_e); act_l.addWidget(btn_d)
             self._metals_table.setCellWidget(i, 5, act_w)
 
@@ -713,6 +714,7 @@ class SettingsPage(QWidget):
 
     def _metal_dialog(self, metal):
         dlg = QDialog(self)
+        dlg.setWindowFlags(dlg.windowFlags() & ~Qt.WindowContextHelpButtonHint)
         dlg.setWindowTitle("Add Metal" if not metal else "Edit Metal")
         dlg.setMinimumWidth(360)
         dlg.setStyleSheet("QDialog{background:#f5f6fa;}")
@@ -749,6 +751,42 @@ class SettingsPage(QWidget):
         spn_rate   = _dspn(metal.get("rate",   0.0) if metal else 0.0)
         spn_labour = _dspn(metal.get("labour", 0.0) if metal else 0.0)
 
+        # Enter key navigation: name → purity → rate → labour → save
+        # Use event filters on all fields (returnPressed alone lets the event
+        # reach the dialog and trigger accept prematurely).
+        # Store refs on dlg to prevent Python GC from deleting them.
+        class _EnterNav(QObject):
+            def __init__(self_, nxt, dlg_ref, parent=None):
+                super().__init__(parent)
+                self_._nxt = nxt
+                self_._dlg = dlg_ref
+
+            def eventFilter(self_, obj, event):
+                if (event.type() == QEvent.KeyPress and
+                        event.key() in (Qt.Key_Return, Qt.Key_Enter)):
+                    if self_._nxt is None:
+                        self_._dlg.accept()
+                    else:
+                        self_._nxt.setFocus()
+                    return True
+                return False
+
+        dlg._nav1 = _EnterNav(txt_purity, dlg, dlg)
+        dlg._nav2 = _EnterNav(spn_rate,   dlg, dlg)
+        dlg._nav3 = _EnterNav(spn_labour, dlg, dlg)
+        dlg._nav4 = _EnterNav(None,       dlg, dlg)
+        txt_name.installEventFilter(dlg._nav1)
+        txt_purity.installEventFilter(dlg._nav2)
+        spn_rate.installEventFilter(dlg._nav3)
+        spn_labour.installEventFilter(dlg._nav4)
+
+        # Block Enter at the dialog level so it can never accidentally accept
+        _orig_kp = dlg.keyPressEvent
+        def _dlg_kp(event):
+            if event.key() not in (Qt.Key_Return, Qt.Key_Enter):
+                _orig_kp(event)
+        dlg.keyPressEvent = _dlg_kp
+
         fl = QFormLayout(); fl.setSpacing(8)
         fl.addRow(_lbl("Metal Name *"),  txt_name)
         fl.addRow(_lbl("Purity *"),      txt_purity)
@@ -759,6 +797,9 @@ class SettingsPage(QWidget):
         bb = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
         bb.accepted.connect(dlg.accept)
         bb.rejected.connect(dlg.reject)
+        for _btn in bb.buttons():
+            _btn.setAutoDefault(False)
+            _btn.setDefault(False)
         vl.addWidget(bb)
 
         if dlg.exec() != QDialog.Accepted:
@@ -770,7 +811,7 @@ class SettingsPage(QWidget):
             return
 
         if metal:
-            ok = update_metal_rec(metal["id"], name_v, purity_v, spn_rate.value(), spn_labour.value())
+            ok = update_metal_rec(metal["metal_id"], name_v, purity_v, spn_rate.value(), spn_labour.value())
         else:
             ok = add_metal(name_v, purity_v, spn_rate.value(), spn_labour.value())
 
@@ -854,19 +895,8 @@ class SettingsPage(QWidget):
             "QLineEdit:focus{border:1px solid #3949ab;}"
         )
 
-        self._new_item_cat = QComboBox()
-        self._new_item_cat.setFixedHeight(36)
-        self._new_item_cat.setMinimumWidth(130)
-        self._new_item_cat.setStyleSheet(
-            "QComboBox{border:1px solid #ced4da;border-radius:6px;"
-            "padding:0 8px;font-size:13px;background:white;}"
-            "QComboBox::drop-down{border:none;}"
-        )
-        self._new_item_cat.currentIndexChanged.connect(self._filter_metals_by_category)
-
         add_row1.addWidget(QLabel("Name *")); add_row1.addWidget(self._new_item_name, 1)
         add_row1.addWidget(QLabel("Code"));   add_row1.addWidget(self._new_item_code)
-        add_row1.addWidget(QLabel("Category")); add_row1.addWidget(self._new_item_cat)
 
         # ── Row 2: Metal + Purity + Group + Add button ────────
         add_row2 = QHBoxLayout(); add_row2.setSpacing(8)
@@ -874,12 +904,16 @@ class SettingsPage(QWidget):
         self._new_item_metal = QComboBox()
         self._new_item_metal.setFixedHeight(36)
         self._new_item_metal.setMinimumWidth(200)
+        self._new_item_metal.setEditable(True)
+        self._new_item_metal.setInsertPolicy(QComboBox.NoInsert)
+        self._new_item_metal.lineEdit().setPlaceholderText("Search metal…")
         self._new_item_metal.setStyleSheet(
             "QComboBox{border:1px solid #ced4da;border-radius:6px;"
             "padding:0 8px;font-size:13px;background:white;}"
+            "QComboBox:focus{border:1px solid #3949ab;}"
             "QComboBox::drop-down{border:none;}"
         )
-        self._new_item_metal.currentIndexChanged.connect(self._on_new_item_metal_changed)
+        self._new_item_metal.editTextChanged.connect(self._on_new_item_metal_changed)
 
         self._new_item_purity = QLineEdit()
         self._new_item_purity.setPlaceholderText("Purity (auto-filled)")
@@ -908,7 +942,60 @@ class SettingsPage(QWidget):
             "QPushButton:hover{background:#283593;}"
         )
         btn_add_item.clicked.connect(self._add_catalog_item)
-        self._new_item_name.returnPressed.connect(self._add_catalog_item)
+
+        # ── Enter navigation: name → code → metal → group → add ──────────────
+        # Plain QLineEdit fields use returnPressed (clean, no dialog interference).
+        # The metal combo needs an event filter because it is editable with a popup.
+        # Purity is skipped — it auto-fills when a metal is chosen.
+
+        def _focus_select(w):
+            w.setFocus()
+            QTimer.singleShot(0, w.selectAll)
+
+        self._new_item_name.returnPressed.connect(
+            lambda: _focus_select(self._new_item_code))
+        self._new_item_code.returnPressed.connect(
+            lambda: self._new_item_metal.setFocus())
+        self._new_item_group.returnPressed.connect(self._add_catalog_item)
+
+        # Metal combo — event filter on its internal line edit
+        class _MetalNav(QObject):
+            def __init__(self_, combo, parent=None):
+                super().__init__(parent)
+                self_._combo = combo
+
+            def eventFilter(self_, obj, event):
+                if (event.type() == QEvent.KeyPress and
+                        event.key() in (Qt.Key_Return, Qt.Key_Enter)):
+                    if self_._combo.view().isVisible():
+                        return False          # popup open: let Qt select the item
+                    _focus_select(self._new_item_group)
+                    return True
+                return False
+
+        # Focus filter: show full dropdown + select all when metal is focused
+        class _MetalFocus(QObject):
+            def __init__(self_, combo, parent=None):
+                super().__init__(parent)
+                self_._combo = combo
+
+            def eventFilter(self_, obj, event):
+                if event.type() == QEvent.FocusIn:
+                    if self_._combo.isVisible():
+                        # Fetch completer at fire-time — avoids stale ref after rebuild
+                        def _show_all():
+                            c = self_._combo.completer()
+                            if c:
+                                c.complete()
+                        QTimer.singleShot(0, _show_all)
+                    QTimer.singleShot(0, obj.selectAll)
+                return False
+
+        # Store on self to prevent GC
+        self._metal_nav_filter   = _MetalNav(self._new_item_metal, self)
+        self._metal_focus_filter = _MetalFocus(self._new_item_metal, self)
+        self._new_item_metal.lineEdit().installEventFilter(self._metal_nav_filter)
+        self._new_item_metal.lineEdit().installEventFilter(self._metal_focus_filter)
 
         add_row2.addWidget(QLabel("Metal"));  add_row2.addWidget(self._new_item_metal)
         add_row2.addWidget(QLabel("Purity")); add_row2.addWidget(self._new_item_purity)
@@ -953,49 +1040,39 @@ class SettingsPage(QWidget):
         root.addStretch()
         return wrap
 
-    def _on_new_item_metal_changed(self, idx):
-        metal_id = self._new_item_metal.itemData(idx)
-        if not metal_id:
-            self._new_item_purity.clear()
-            return
+    def _on_new_item_metal_changed(self, text):
         all_metals = getattr(self, '_all_metals', None) or get_metals()
-        m = next((x for x in all_metals if x.get('id') == metal_id), None)
+        m = next(
+            (x for x in all_metals if f"{x['name']} – {x['purity']}" == text.strip()),
+            None
+        )
         if m:
             self._new_item_purity.setText(m.get('purity', ''))
         else:
             self._new_item_purity.clear()
 
-    def _filter_metals_by_category(self):
-        """Repopulate the metal dropdown to show only metals whose name matches the selected category."""
-        cat = self._new_item_cat.currentText()
-        all_metals = getattr(self, '_all_metals', None) or get_metals()
-        if cat and cat != "(no category)":
-            filtered = [m for m in all_metals if m.get('name', '').lower() == cat.lower()]
-        else:
-            filtered = all_metals
-        self._new_item_metal.blockSignals(True)
-        self._new_item_metal.clear()
-        self._new_item_metal.addItem("(no metal)")
-        for m in filtered:
-            self._new_item_metal.addItem(f"{m['name']} – {m['purity']}", m.get("id"))
-        self._new_item_metal.blockSignals(False)
-        self._new_item_purity.clear()
-
     def _rebuild_catalog_categories(self):
-        cats = AppConfig.categories()
-        self._new_item_cat.blockSignals(True)
-        self._new_item_cat.clear()
-        self._new_item_cat.addItem("(no category)")
-        self._new_item_cat.addItems(cats)
-        self._new_item_cat.blockSignals(False)
-
         self._all_metals = get_metals()
         self._new_item_metal.blockSignals(True)
         self._new_item_metal.clear()
-        self._new_item_metal.addItem("(no metal)")
         for m in self._all_metals:
-            self._new_item_metal.addItem(f"{m['name']} – {m['purity']}", m.get("id"))
+            self._new_item_metal.addItem(f"{m['name']} – {m['purity']}", m.get("metal_id"))
+
+        # Contains-match completer — shows all on empty, filters on typing
+        mc = QCompleter(self)
+        mc.setModel(self._new_item_metal.model())
+        mc.setCaseSensitivity(Qt.CaseInsensitive)
+        mc.setFilterMode(Qt.MatchContains)
+        mc.setCompletionMode(QCompleter.PopupCompletion)
+        self._new_item_metal.setCompleter(mc)
+        # After selecting from popup → move to Group and select all its text
+        mc.activated[str].connect(lambda _: QTimer.singleShot(
+            0, lambda: (self._new_item_group.setFocus(),
+                        self._new_item_group.selectAll())
+        ))
         self._new_item_metal.blockSignals(False)
+        # Qt auto-sets first item as current text — clear it so field starts empty
+        self._new_item_metal.clearEditText()
 
         # Update group completer from groups list
         groups = AppConfig.item_groups()
@@ -1135,23 +1212,23 @@ class SettingsPage(QWidget):
         name = self._new_item_name.text().strip()
         if not name:
             return
-        cat = self._new_item_cat.currentText()
-        if cat == "(no category)":
-            cat = ""
+        cat    = ""
         code   = self._new_item_code.text().strip().upper()
         purity = self._new_item_purity.text().strip()
         group  = self._new_item_group.text().strip()
 
-        midx     = self._new_item_metal.currentIndex()
-        metal_id = self._new_item_metal.itemData(midx) if midx > 0 else ""
+        cur_text   = self._new_item_metal.currentText().strip()
+        all_m      = getattr(self, '_all_metals', None) or get_metals()
+        matched_m  = next(
+            (x for x in all_m if f"{x['name']} – {x['purity']}" == cur_text), None
+        )
+        metal_id = matched_m.get("metal_id", "") if matched_m else ""
         rate = labour = 0.0
-        if metal_id:
-            m = next((x for x in get_metals() if x.get("id") == metal_id), None)
-            if m:
-                rate   = m.get("rate",   0.0)
-                labour = m.get("labour", 0.0)
-                if not purity:
-                    purity = m.get("purity", "")
+        if matched_m:
+            rate   = matched_m.get("rate",   0.0)
+            labour = matched_m.get("labour", 0.0)
+            if not purity:
+                purity = matched_m.get("purity", "")
 
         ok = add_catalog_item(name, cat, purity, code, group, metal_id, rate, labour)
         if not ok:
@@ -1162,6 +1239,7 @@ class SettingsPage(QWidget):
             return
         self._new_item_name.clear()
         self._new_item_code.clear()
+        self._new_item_metal.clearEditText()
         self._new_item_purity.clear()
         self._new_item_group.clear()
         self._cat_search.clear()
@@ -1169,6 +1247,7 @@ class SettingsPage(QWidget):
 
     def _edit_catalog_item(self, old_name: str):
         dlg = QDialog(self)
+        dlg.setWindowFlags(dlg.windowFlags() & ~Qt.WindowContextHelpButtonHint)
         dlg.setWindowTitle("Edit Item")
         dlg.setMinimumWidth(420)
         dlg.setStyleSheet("QDialog{background:#f5f6fa;}")
@@ -1187,70 +1266,156 @@ class SettingsPage(QWidget):
             t.setStyleSheet(
                 "QLineEdit{border:1px solid #ced4da;border-radius:6px;"
                 "padding:0 10px;font-size:13px;background:white;}"
+                "QLineEdit:focus{border-color:#3949ab;}"
             )
             return t
 
-        txt_name   = _txt(old_name,                    "Item name *")
-        txt_code   = _txt(entry.get("code",   ""),     "Code (shortcut)")
-        txt_purity = _txt(entry.get("purity", ""),     "Purity")
-        txt_group  = _txt(entry.get("group",  ""),     "Group")
+        txt_name   = _txt(old_name,                "Item name *")
+        txt_code   = _txt(entry.get("code",   ""), "Code (shortcut)")
+        txt_purity = _txt(entry.get("purity", ""), "Purity")
+        txt_group  = _txt(entry.get("group",  ""), "Group")
 
-        cmb_cat = QComboBox(); cmb_cat.setFixedHeight(34)
-        cmb_cat.addItem("(no category)"); cmb_cat.addItems(AppConfig.categories())
-        if entry.get("category"):
-            idx = cmb_cat.findText(entry["category"])
-            if idx >= 0: cmb_cat.setCurrentIndex(idx)
-
+        # ── Editable + searchable metal combo ────────────────
         metals = get_metals()
-        cmb_metal = QComboBox(); cmb_metal.setFixedHeight(34)
-        cmb_metal.addItem("(no metal)")
+        cmb_metal = QComboBox()
+        cmb_metal.setFixedHeight(34)
+        cmb_metal.setEditable(True)
+        cmb_metal.setInsertPolicy(QComboBox.NoInsert)
+        cmb_metal.setStyleSheet(
+            "QComboBox{border:1px solid #ced4da;border-radius:6px;"
+            "padding:0 8px;font-size:13px;background:white;}"
+            "QComboBox:focus{border:1px solid #3949ab;}"
+            "QComboBox::drop-down{border:none;}"
+        )
         for m in metals:
-            cmb_metal.addItem(f"{m['name']} – {m['purity']}", m.get("id"))
+            cmb_metal.addItem(f"{m['name']} – {m['purity']}", m.get("metal_id"))
+
+        mc = QCompleter(dlg)
+        mc.setModel(cmb_metal.model())
+        mc.setCaseSensitivity(Qt.CaseInsensitive)
+        mc.setFilterMode(Qt.MatchContains)
+        mc.setCompletionMode(QCompleter.PopupCompletion)
+        cmb_metal.setCompleter(mc)
+
+        # Restore the item's current metal text AFTER completer is set.
+        # setCompleter() can reset the line-edit text, so we write it explicitly.
         cur_mid = entry.get("metal_id", "")
+        _preset_text = ""
         if cur_mid:
             for i in range(cmb_metal.count()):
                 if cmb_metal.itemData(i) == cur_mid:
-                    cmb_metal.setCurrentIndex(i); break
+                    _preset_text = cmb_metal.itemText(i)
+                    break
+        cmb_metal.lineEdit().setText(_preset_text)
 
-        def _on_metal_change(idx):
-            if idx > 0 and idx - 1 < len(metals):
-                m = metals[idx - 1]
-                if not txt_purity.text():
-                    txt_purity.setText(m.get("purity", ""))
-        cmb_metal.currentIndexChanged.connect(_on_metal_change)
+        def _on_metal_text(text):
+            m = next((x for x in metals
+                      if f"{x['name']} – {x['purity']}" == text.strip()), None)
+            if m and not txt_purity.text():
+                txt_purity.setText(m.get("purity", ""))
+        cmb_metal.editTextChanged.connect(_on_metal_text)
+
+        # Selecting from popup → focus purity + select all
+        mc.activated[str].connect(lambda _: QTimer.singleShot(
+            0, lambda: (txt_purity.setFocus(), txt_purity.selectAll())))
 
         fl = QFormLayout(); fl.setSpacing(8)
         fl.addRow(_lbl("Item Name *"), txt_name)
         fl.addRow(_lbl("Code"),        txt_code)
-        fl.addRow(_lbl("Category"),    cmb_cat)
         fl.addRow(_lbl("Metal"),       cmb_metal)
         fl.addRow(_lbl("Purity"),      txt_purity)
         fl.addRow(_lbl("Group"),       txt_group)
         vl.addLayout(fl)
 
         bb = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
-        bb.accepted.connect(dlg.accept); bb.rejected.connect(dlg.reject)
+        bb.accepted.connect(dlg.accept)
+        bb.rejected.connect(dlg.reject)
+        for _b in bb.buttons():
+            _b.setAutoDefault(False)
+            _b.setDefault(False)
         vl.addWidget(bb)
+
+        # ── Enter navigation: name→code→metal→purity→group→save ──
+        class _Nav(QObject):
+            def __init__(self_, nxt, dlg_ref, combo=None, parent=None):
+                super().__init__(parent)
+                self_._nxt   = nxt
+                self_._dlg   = dlg_ref
+                self_._combo = combo
+
+            def eventFilter(self_, obj, event):
+                if (event.type() == QEvent.KeyPress and
+                        event.key() in (Qt.Key_Return, Qt.Key_Enter)):
+                    if self_._combo is not None and self_._combo.view().isVisible():
+                        return False      # popup open: let Qt select item first
+                    if self_._nxt is None:
+                        self_._dlg.accept()
+                    else:
+                        self_._nxt.setFocus()
+                        def _sel(w=self_._nxt):
+                            le = (w.lineEdit() if (hasattr(w, 'lineEdit')
+                                  and callable(w.lineEdit)) else w)
+                            if le and hasattr(le, 'selectAll'):
+                                le.selectAll()
+                        QTimer.singleShot(0, _sel)
+                    return True
+                return False
+
+        dlg._nav1 = _Nav(txt_code,   dlg, parent=dlg)
+        dlg._nav2 = _Nav(cmb_metal,  dlg, parent=dlg)
+        dlg._nav3 = _Nav(txt_purity, dlg, combo=cmb_metal, parent=dlg)
+        dlg._nav4 = _Nav(txt_group,  dlg, parent=dlg)
+        dlg._nav5 = _Nav(None,       dlg, parent=dlg)
+        txt_name.installEventFilter(dlg._nav1)
+        txt_code.installEventFilter(dlg._nav2)
+        cmb_metal.lineEdit().installEventFilter(dlg._nav3)
+        txt_purity.installEventFilter(dlg._nav4)
+        txt_group.installEventFilter(dlg._nav5)
+
+        # Show full metal list + select all when combo is focused
+        class _CmbFocus(QObject):
+            def __init__(self_, combo, parent=None):
+                super().__init__(parent)
+                self_._combo = combo
+
+            def eventFilter(self_, obj, event):
+                if event.type() == QEvent.FocusIn:
+                    if self_._combo.isVisible():
+                        def _show():
+                            c = self_._combo.completer()
+                            if c:
+                                c.complete()
+                        QTimer.singleShot(0, _show)
+                    QTimer.singleShot(0, obj.selectAll)
+                return False
+
+        dlg._cmb_focus = _CmbFocus(cmb_metal, dlg)
+        cmb_metal.lineEdit().installEventFilter(dlg._cmb_focus)
+
+        # Block Enter at dialog level so it never auto-accepts
+        _orig_kp = dlg.keyPressEvent
+        def _dlg_kp(event):
+            if event.key() not in (Qt.Key_Return, Qt.Key_Enter):
+                _orig_kp(event)
+        dlg.keyPressEvent = _dlg_kp
 
         if dlg.exec() != QDialog.Accepted:
             return
         new_name = txt_name.text().strip()
-        if not new_name: return
+        if not new_name:
+            return
 
-        new_cat = cmb_cat.currentText()
-        if new_cat == "(no category)": new_cat = ""
-
-        midx     = cmb_metal.currentIndex()
-        metal_id = cmb_metal.itemData(midx) if midx > 0 else ""
+        cur_text  = cmb_metal.currentText().strip()
+        matched_m = next((x for x in metals
+                          if f"{x['name']} – {x['purity']}" == cur_text), None)
+        metal_id  = matched_m.get("metal_id", "") if matched_m else ""
         rate = labour = 0.0
-        if metal_id:
-            m = next((x for x in metals if x.get("id") == metal_id), None)
-            if m:
-                rate   = m.get("rate",   0.0)
-                labour = m.get("labour", 0.0)
+        if matched_m:
+            rate   = matched_m.get("rate",   0.0)
+            labour = matched_m.get("labour", 0.0)
 
         update_catalog_item(
-            old_name, new_name, new_cat,
+            old_name, new_name, "",
             purity   = txt_purity.text().strip(),
             code     = txt_code.text().strip().upper(),
             group    = txt_group.text().strip(),

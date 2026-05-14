@@ -5,7 +5,7 @@ _ENTRY_COLS = {
     "entry_id", "entry_type", "source", "voucher_no", "voucher_date",
     "metal_type", "item_name", "sub_name", "purity", "dabba_name", "dabba_wt",
     "gross_wt", "plastic_wt", "qty_in", "less_wt", "dia_wt", "net_wt",
-    "location", "out_gross_wt", "out_net_wt", "qty_out",
+    "location", "out_gross_wt", "out_less_wt", "out_net_wt", "qty_out",
     "remarks", "invoice_id", "rate", "amount", "vendor_name", "description",
 }
 

@@ -121,7 +121,10 @@ class VendorPage(QWidget):
     def _add(self):
         dlg = VendorDialog(self)
         if dlg.exec() == QDialog.Accepted:
-            add_vendor(VendorModel(**dlg.result_data)); self.refresh()
+            ok = add_vendor(VendorModel(**dlg.result_data))
+            if not ok:
+                QMessageBox.warning(self, "Duplicate", "A vendor with that name already exists.")
+            self.refresh()
 
     def _edit(self):
         row = self.tbl.currentRow()

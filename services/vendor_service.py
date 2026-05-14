@@ -16,6 +16,12 @@ def add_vendor(vendor: VendorModel) -> bool:
     from app.database import get_db
     try:
         with get_db() as conn:
+            existing = conn.execute(
+                "SELECT 1 FROM vendors WHERE LOWER(vendor_name) = LOWER(?)",
+                (d["vendor_name"],),
+            ).fetchone()
+            if existing:
+                return False
             conn.execute(
                 "INSERT INTO vendors (vendor_id, vendor_name, phone, address, gst_number, email, notes)"
                 " VALUES (?, ?, ?, ?, ?, ?, ?)",

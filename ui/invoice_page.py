@@ -15,8 +15,7 @@ from PyQt5.QtWidgets import QShortcut
 from PyQt5.QtGui import QKeySequence
 from app.config import AppConfig
 from app.utils import format_currency
-from app.printer_helper import save_invoice_as_pdf
-from services.invoice_service import create_invoice, update_invoice
+from services.invoice_service import create_invoice, update_invoice, get_all_invoices
 from services.customer_service import get_all_customers, update_customer
 from services.item_catalog_service import (
     get_item_by_code, get_item_by_name, get_names as get_catalog_names, add_catalog_item
@@ -57,6 +56,74 @@ class _EnterNav(QObject):
                 self._on_last()
                 return True
         return False
+
+
+class _CustCompleterNav(QObject):
+    """
+    Keyboard handler for customer autocomplete fields.
+    - Enter with popup open  → select highlighted item, call on_enter_select, move to next.
+    - Tab   with popup open  → hide popup silently (no autofill), let Tab move focus normally.
+    - Enter without popup    → just move to next field.
+    """
+    def __init__(self, field, on_enter_select, next_field=None, parent=None):
+        super().__init__(parent)
+        self._on_enter_select = on_enter_select
+        self._next = next_field
+        field.installEventFilter(self)
+
+    def eventFilter(self, obj, event):
+        if event.type() != QEvent.KeyPress:
+            return False
+        c = obj.completer()
+        popup_open = bool(c and c.popup() and c.popup().isVisible())
+
+        if event.key() in (Qt.Key_Return, Qt.Key_Enter):
+            if popup_open:
+                idx = c.popup().currentIndex()
+                if idx.isValid():
+                    text = c.completionModel().data(idx)
+                    c.popup().hide()
+                    if self._on_enter_select:
+                        self._on_enter_select(text)
+                else:
+                    c.popup().hide()
+            if self._next:
+                QTimer.singleShot(0, self._next.setFocus)
+            return True
+
+        if event.key() == Qt.Key_Tab and popup_open:
+            c.popup().hide()
+            return False  # let Tab move focus naturally without autofill
+
+        return False
+
+
+class _CustFocusShow(QObject):
+    """Re-show the completer dropdown when a customer field regains focus with existing text.
+    Skips re-show when focus is returning FROM the completer popup (PopupFocusReason),
+    which prevents the popup from re-opening immediately after the user just made a selection.
+    Fetches the completer at fire-time to avoid stale-reference crashes.
+    """
+    def __init__(self, field, parent=None):
+        super().__init__(parent)
+        field.installEventFilter(self)
+
+    def eventFilter(self, obj, event):
+        if event.type() == QEvent.FocusIn:
+            # PopupFocusReason means focus returned from the completer popup itself —
+            # don't re-open it or we get a stale-popup crash and the popup re-appears
+            # immediately after the user selected an item.
+            if event.reason() == Qt.PopupFocusReason:
+                return False
+            if obj.text().strip():
+                QTimer.singleShot(50, lambda o=obj: self._show(o))
+        return False
+
+    @staticmethod
+    def _show(obj):
+        c = obj.completer()
+        if c and obj.hasFocus():
+            c.complete()
 
 
 class InvoicePage(QWidget):
@@ -157,6 +224,31 @@ class InvoicePage(QWidget):
         self._customers_cache: list[dict] = []
         self._setup_customer_autocomplete()
         root.addWidget(cust_grp)
+
+        # ── Customer Dues Banner ──────────────────────────────────
+        self._frm_dues = QFrame()
+        self._frm_dues.setVisible(False)
+        self._frm_dues.setStyleSheet(
+            "QFrame{background:#fff3cd;border:1px solid #f0ad4e;"
+            "border-left:5px solid #e67e22;border-radius:5px;padding:2px;}"
+        )
+        dues_row = QHBoxLayout(self._frm_dues)
+        dues_row.setContentsMargins(12, 6, 12, 6)
+        dues_row.setSpacing(10)
+
+        dues_icon = QLabel("⚠️")
+        dues_icon.setStyleSheet("background:transparent;border:none;font-size:15px;")
+        dues_icon.setFixedWidth(22)
+
+        self._lbl_dues_text = QLabel()
+        self._lbl_dues_text.setStyleSheet(
+            "background:transparent;border:none;"
+            "color:#7d4e00;font-size:12px;font-weight:bold;"
+        )
+        self._lbl_dues_text.setWordWrap(True)
+
+        dues_row.addWidget(dues_icon)
+        dues_row.addWidget(self._lbl_dues_text, 1)
 
         # ── Invoice Items — inline editable table ────────────────
         # Each row is fully editable. Enter on last field appends a new row.
@@ -540,6 +632,7 @@ class InvoicePage(QWidget):
         tfl.addRow("NET PAYABLE:", self.lbl_grand)
 
         _totals_vbox.addWidget(_tax_form_w)
+        _totals_vbox.addWidget(self._frm_dues)
         _totals_vbox.addStretch()
 
         # Info hint — pinned to the bottom of the totals card
@@ -624,21 +717,55 @@ class InvoicePage(QWidget):
                       self.txt_cemail, self.txt_aadhaar, self.txt_pan):
             field.editingFinished.connect(self._on_customer_field_edited)
 
+        # ── Keyboard nav: Enter selects from dropdown / moves to next field ──
+        # (installed once here; _rebuild_customer_completers only swaps the completer object)
+        self._mob_nav     = _CustCompleterNav(self.txt_cmobile,  self._on_mobile_display_chosen, self.txt_cname,    parent=self)
+        self._name_nav    = _CustCompleterNav(self.txt_cname,    self._on_name_chosen,            self.txt_caddr,    parent=self)
+        self._email_nav   = _CustCompleterNav(self.txt_cemail,   self._on_email_chosen,           self.txt_cust_gst, parent=self)
+        self._addr_nav    = _CustCompleterNav(self.txt_caddr,    None,                            self.txt_cemail,   parent=self)
+        self._gst_nav     = _CustCompleterNav(self.txt_cust_gst, None,                            self.txt_aadhaar,  parent=self)
+        self._aadhaar_nav = _CustCompleterNav(self.txt_aadhaar,  None,                            self.txt_pan,      parent=self)
+        self._pan_nav     = _CustCompleterNav(self.txt_pan,      None,                            None,              parent=self)
+
+        # ── Show dropdown when focusing back into a field with text ──
+        self._mob_focus   = _CustFocusShow(self.txt_cmobile, parent=self)
+        self._name_focus  = _CustFocusShow(self.txt_cname,   parent=self)
+        self._email_focus = _CustFocusShow(self.txt_cemail,  parent=self)
+
     def _rebuild_customer_completers(self):
-        """Rebuild completers on both mobile and name fields from the current cache."""
-        mobiles = [c.get("mobile", "") for c in self._customers_cache if c.get("mobile")]
-        mob_c = QCompleter(mobiles, self)
+        """Rebuild completers on mobile, name and email fields from the current cache.
+        activated signal handles mouse-click selection; keyboard selection is handled
+        by _CustCompleterNav event filters installed once in _setup_customer_autocomplete.
+        """
+        # Mobile: "phone  |  name" display strings, filter by phone prefix
+        mob_displays = []
+        for c in self._customers_cache:
+            mob = c.get("mobile", "")
+            if not mob:
+                continue
+            name = c.get("customer_name", "")
+            mob_displays.append(f"{mob}  |  {name}" if name else mob)
+
+        mob_c = QCompleter(mob_displays, self)
         mob_c.setCaseSensitivity(Qt.CaseInsensitive)
-        mob_c.setFilterMode(Qt.MatchContains)
-        mob_c.activated.connect(self._on_mobile_chosen)
+        mob_c.setFilterMode(Qt.MatchStartsWith)
+        mob_c.setMaxVisibleItems(8)
+        mob_c.activated.connect(self._on_mobile_display_chosen)  # mouse-click path
         self.txt_cmobile.setCompleter(mob_c)
 
         names = [c.get("customer_name", "") for c in self._customers_cache if c.get("customer_name")]
         name_c = QCompleter(names, self)
         name_c.setCaseSensitivity(Qt.CaseInsensitive)
         name_c.setFilterMode(Qt.MatchContains)
-        name_c.activated.connect(self._on_name_chosen)
+        name_c.activated.connect(self._on_name_chosen)  # mouse-click path
         self.txt_cname.setCompleter(name_c)
+
+        emails = [c.get("email", "") for c in self._customers_cache if c.get("email")]
+        email_c = QCompleter(emails, self)
+        email_c.setCaseSensitivity(Qt.CaseInsensitive)
+        email_c.setFilterMode(Qt.MatchContains)
+        email_c.activated.connect(self._on_email_chosen)  # mouse-click path
+        self.txt_cemail.setCompleter(email_c)
 
     def _autofill_from_customer(self, c: dict):
         """Fill all customer fields from a record and track the selected customer ID."""
@@ -654,13 +781,47 @@ class InvoicePage(QWidget):
             field.blockSignals(True)
             field.setText(val)
             field.blockSignals(False)
+        self._refresh_dues_banner(c.get("mobile", ""), c.get("customer_name", ""))
 
-    def _on_mobile_chosen(self, text: str):
-        text = text.strip()
+    def _refresh_dues_banner(self, mobile: str, name: str = ""):
+        """Show total outstanding dues for this customer above the items table."""
+        if not mobile:
+            self._frm_dues.setVisible(False)
+            return
+        all_inv = get_all_invoices()
+        due_invoices = [
+            i for i in all_inv
+            if i.get("customer_mobile", "") == mobile
+            and float(i.get("due_amount", 0) or 0) > 0
+        ]
+        if not due_invoices:
+            self._frm_dues.setVisible(False)
+            return
+        total_due = sum(float(i.get("due_amount", 0) or 0) for i in due_invoices)
+        count = len(due_invoices)
+        customer = name or mobile
+        from app.utils import format_currency
+        self._lbl_dues_text.setText(
+            f"Previous dues for {customer}:  "
+            f"{format_currency(total_due)}  "
+            f"across {count} invoice{'s' if count != 1 else ''}"
+        )
+        self._frm_dues.setVisible(True)
+
+    def _on_mobile_display_chosen(self, text: str):
+        """User picked a customer from the mobile dropdown (text is 'phone  |  name')."""
+        phone = text.split("  |  ")[0].strip()
+        # QCompleter sets the field to the full display string; reset to just the phone
+        QTimer.singleShot(0, lambda p=phone: self._fix_mobile_field(p))
         for c in self._customers_cache:
-            if c.get("mobile", "") == text:
+            if c.get("mobile", "") == phone:
                 self._autofill_from_customer(c)
                 return
+
+    def _fix_mobile_field(self, phone: str):
+        self.txt_cmobile.blockSignals(True)
+        self.txt_cmobile.setText(phone)
+        self.txt_cmobile.blockSignals(False)
 
     def _on_name_chosen(self, text: str):
         text = text.strip()
@@ -669,23 +830,38 @@ class InvoicePage(QWidget):
                 self._autofill_from_customer(c)
                 return
 
+    def _on_email_chosen(self, text: str):
+        text = text.strip()
+        for c in self._customers_cache:
+            if c.get("email", "") == text:
+                self._autofill_from_customer(c)
+                return
+
     def _autofill_by_mobile_text(self, text: str):
         """Real-time exact-match autofill as the user types in the mobile field."""
         text = text.strip()
-        if len(text) < 6:
+        # Ignore the transient "phone  |  name" display value set by QCompleter
+        if "  |  " in text or len(text) < 6:
             return
         for c in self._customers_cache:
             if c.get("mobile", "") == text:
                 self._autofill_from_customer(c)
                 return
+        # No match yet — hide any stale banner
+        self._frm_dues.setVisible(False)
 
     def _on_customer_field_edited(self):
         """When any customer field loses focus, update the customer record if one is selected."""
         if not self._selected_customer_id:
             return
+        # Sanitize mobile: strip the "phone  |  name" display string if completer left it
+        mobile_raw = self.txt_cmobile.text().strip()
+        mobile = mobile_raw.split("  |  ")[0].strip() if "  |  " in mobile_raw else mobile_raw
+        if mobile != mobile_raw:
+            self._fix_mobile_field(mobile)
         update_customer(self._selected_customer_id, {
             "customer_name": self.txt_cname.text().strip(),
-            "mobile":        self.txt_cmobile.text().strip(),
+            "mobile":        mobile,
             "address":       self.txt_caddr.text().strip(),
             "email":         self.txt_cemail.text().strip(),
             "aadhaar":       self.txt_aadhaar.text().strip(),
@@ -846,6 +1022,11 @@ class InvoicePage(QWidget):
                 w._item_rd   = rd
                 w._chain_idx = ci
                 w.installEventFilter(self)
+                # For spinboxes, also install eventFilter on the internal lineEdit so Enter is caught
+                if hasattr(w, 'lineEdit') and w.lineEdit():
+                    w.lineEdit()._item_rd   = rd
+                    w.lineEdit()._chain_idx = ci
+                    w.lineEdit().installEventFilter(self)
         w_tag.returnPressed.connect(lambda _rd=rd: self._focus_and_select(_rd['name']))
         w_name.returnPressed.connect(lambda _rd=rd: self._name_code_lookup(_rd))
         w_huid.returnPressed.connect(lambda _rd=rd: self._focus_and_select(_rd['purity']))
@@ -1128,6 +1309,7 @@ class InvoicePage(QWidget):
 
         return {
             "invoice_date":     self.dte_invoice.date().toString("yyyy-MM-dd"),
+            "date":             self.dte_invoice.date().toString("yyyy-MM-dd"),
             "customer_name":    self.txt_cname.text().strip(),
             "customer_mobile":  self.txt_cmobile.text().strip(),
             "customer_email":   self.txt_cemail.text().strip(),
@@ -1178,17 +1360,43 @@ class InvoicePage(QWidget):
             preview_data.setdefault("invoice_number", self._editing_invoice_number)
         else:
             preview_data.setdefault("invoice_number", f"{prefix}-{last + 1:04d} (Preview)")
-        # Use the date from the date picker; fall back to today
-        preview_data["date"] = preview_data.get("invoice_date") or date.today().strftime("%Y-%m-%d")
 
         try:
             os.makedirs(INVOICES_PRINT, exist_ok=True)
             preview_path = os.path.join(INVOICES_PRINT, "invoice_preview.pdf")
-            _generate_pdf(preview_data, preview_path)
-            os.startfile(preview_path)
+            try:
+                _generate_pdf(preview_data, preview_path)
+                os.startfile(preview_path)
+            except OSError:
+                # No PDF viewer installed — fall back to Qt's built-in print preview
+                self._qt_print_preview(preview_data)
         except Exception as e:
             traceback.print_exc()
             QMessageBox.critical(self, "Preview Error", f"Could not generate preview:\n{e}")
+
+    def _qt_print_preview(self, invoice: dict):
+        """Fallback preview using Qt's built-in QPrintPreviewDialog (no external app needed)."""
+        try:
+            from PyQt5.QtPrintSupport import QPrinter, QPrintPreviewDialog
+            from PyQt5.QtGui import QTextDocument
+            from PyQt5.QtCore import QSizeF
+            from app.printer_helper import build_html_preview
+
+            html    = build_html_preview(invoice)
+            doc     = QTextDocument()
+            doc.setHtml(html)
+            doc.setPageSize(QSizeF(595, 842))
+
+            printer = QPrinter(QPrinter.HighResolution)
+            printer.setPageSize(QPrinter.A4)
+
+            dlg = QPrintPreviewDialog(printer, self)
+            dlg.setWindowTitle("Invoice Preview")
+            dlg.paintRequested.connect(doc.print_)
+            dlg.exec()
+        except Exception:
+            import traceback as _tb
+            _tb.print_exc()
 
     def _save_invoice(self):
         if not self._validate():
@@ -1217,6 +1425,12 @@ class InvoicePage(QWidget):
     def _save_and_print(self):
         if not self._validate():
             return
+
+        # Ask Original / Duplicate before saving
+        copy_type = self._ask_copy_type()
+        if copy_type is None:
+            return  # user cancelled
+
         extra = self._build_invoice_data()
 
         if self._edit_mode:
@@ -1235,7 +1449,52 @@ class InvoicePage(QWidget):
 
         self._last_invoice = inv
         self._clear_all()
-        save_invoice_as_pdf(inv, parent=self)
+        from app.printer_helper import save_invoice_as_pdf
+        save_invoice_as_pdf(inv, parent=self, copy_type=copy_type)
+
+    def _ask_copy_type(self):
+        """Small dialog: returns 'Original Copy' or 'Duplicate Copy', or None if cancelled."""
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Print Copy")
+        dlg.setFixedSize(320, 120)
+        dlg.setStyleSheet("QDialog{background:#f5f6fa;}")
+
+        vl = QVBoxLayout(dlg)
+        vl.setContentsMargins(20, 16, 20, 16)
+        vl.setSpacing(14)
+
+        lbl = QLabel("Select copy type:")
+        lbl.setStyleSheet("font-size:13px;font-weight:600;color:#2c3e50;")
+        vl.addWidget(lbl)
+
+        hl = QHBoxLayout(); hl.setSpacing(10)
+
+        def _btn(text, color, hover):
+            b = QPushButton(text)
+            b.setFixedHeight(34)
+            b.setCursor(Qt.PointingHandCursor)
+            b.setStyleSheet(
+                f"QPushButton{{background:{color};color:white;border-radius:6px;"
+                f"font-size:12px;font-weight:600;border:none;}}"
+                f"QPushButton:hover{{background:{hover};}}"
+            )
+            return b
+
+        btn_orig = _btn("Original Copy", "#27ae60", "#219a52")
+        btn_dupl = _btn("Duplicate Copy", "#2980b9", "#2471a3")
+        btn_orig.clicked.connect(lambda: dlg.done(1))
+        btn_dupl.clicked.connect(lambda: dlg.done(2))
+
+        hl.addWidget(btn_orig)
+        hl.addWidget(btn_dupl)
+        vl.addLayout(hl)
+
+        result = dlg.exec()
+        if result == 1:
+            return "Original Copy"
+        if result == 2:
+            return "Duplicate Copy"
+        return None
 
     def _do_update(self, extra: dict):
         """Overwrite the existing invoice record in storage. Returns updated dict or None on failure."""
@@ -1541,13 +1800,25 @@ class InvoicePage(QWidget):
     def _apply_catalog_item(self, item: dict, rd: dict):
         """Fill purity and rate into a row from a catalog item dict, then focus GWT."""
         purity = item.get('purity', '')
+        rate = float(item.get('rate') or 0)
+
+        # If catalog item has a metal_id, look up the metal for current purity and rate
+        if item.get('metal_id'):
+            metal = get_metal_by_id(item['metal_id'])
+            if metal:
+                if not purity:
+                    purity = metal.get('purity', '')
+                # Always use the live (current) metal rate, not the stale catalog rate
+                live_rate = float(metal.get('rate') or 0)
+                if live_rate:
+                    rate = live_rate
+
         if purity:
             idx = rd['purity'].findText(purity)
             if idx >= 0:
                 rd['purity'].setCurrentIndex(idx)
             else:
                 rd['purity'].setCurrentText(purity)
-        rate = float(item.get('rate') or 0)
         if rate:
             rd['rate'].setValue(rate)
         self._row_calc(rd)
@@ -1575,11 +1846,12 @@ class InvoicePage(QWidget):
             )
 
     def _clear_all(self):
-        # Reset edit-mode state
+        # Reset edit-mode state and hide dues banner
         self._edit_mode = False
         self._editing_invoice_id = ""
         self._selected_customer_id = ""
         self._editing_invoice_number = ""
+        self._frm_dues.setVisible(False)
         self._title_lbl.setText("🧾  New Invoice")
         self._btn_save.setText("💾  Save Invoice")
         self._btn_print.setText("🖨  Save && Print PDF")

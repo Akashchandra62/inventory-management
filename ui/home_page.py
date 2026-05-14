@@ -11,9 +11,10 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import Qt, pyqtSignal, QDate
 from PyQt5.QtGui import QFont, QCursor
+from typing import List, Optional
 from app.config import AppConfig
 from services.invoice_service import get_all_invoices
-from services.stock_service import get_all_stock, get_low_stock
+from services.stock_entry_service import get_inventory
 from services.vendor_service import get_all_vendors
 from services.customer_service import get_all_customers
 from app.utils import format_currency
@@ -80,6 +81,8 @@ class StatCard(QFrame):
 
 
 class HomePage(QWidget):
+    edit_invoice_requested = pyqtSignal(dict)
+
     def __init__(self):
         super().__init__()
         self._current_metric = "today_sales"
@@ -219,10 +222,19 @@ class HomePage(QWidget):
         self._cards.clear()
 
         self._all_invoices  = get_all_invoices()
-        self._all_stock     = get_all_stock()
+        self._all_stock     = []  # No longer used (was from stock table)
         self._all_vendors   = get_all_vendors()
         self._all_customers = get_all_customers()
-        self._all_low_stock = get_low_stock(AppConfig.low_stock_threshold())
+
+        # Get current inventory from stock_entries ledger and filter by threshold
+        threshold = AppConfig.low_stock_threshold()
+        inventory = get_inventory()
+        self._all_low_stock = [
+            item for item in inventory
+            if item.get("current_qty", 0) <= threshold and (
+                item.get("qty_in", 0) > 0 or item.get("qty_out", 0) > 0
+            )
+        ]
 
         today_str = date.today().isoformat()
         today_inv = [i for i in self._all_invoices if i.get("date") == today_str]
@@ -233,6 +245,11 @@ class HomePage(QWidget):
         today_card   = sum(float(i.get("card_paid",  0)) for i in today_inv)
         today_cheque = sum(float(i.get("cheque_paid",0)) for i in today_inv)
 
+        today_dues_count = len({i.get("customer_name", "") for i in today_inv
+                                if float(i.get("due_amount", 0) or 0) > 0})
+        total_dues_count = len({i.get("customer_name", "") for i in self._all_invoices
+                                if float(i.get("due_amount", 0) or 0) > 0})
+
         cards_data = [
             ("today_sales",   "💰", "Today's Sales",    format_currency(today_sales),   "#f39c12"),
             ("today_cash",    "💵", "Today's Cash",     format_currency(today_cash),    "#27ae60"),
@@ -242,10 +259,12 @@ class HomePage(QWidget):
             ("today_invoices","🧾", "Today's Invoices", str(len(today_inv)),            "#e67e22"),
             ("total_sales",   "📊", "Total Revenue",    format_currency(total_sales),   "#c0392b"),
             ("total_invoices","📋", "Total Invoices",   str(len(self._all_invoices)),   "#7f8c8d"),
-            ("stock",         "📦", "Stock Items",      str(len(self._all_stock)),      "#1abc9c"),
+            ("stock",         "📦", "Stock Items",      str(len(inventory)),            "#1abc9c"),
             ("customers",     "👥", "Customers",        str(len(self._all_customers)),  "#2c3e50"),
             ("vendors",       "🏪", "Vendors",          str(len(self._all_vendors)),    "#d35400"),
             ("low_stock",     "⚠️", "Low Stock",        str(len(self._all_low_stock)),  "#e74c3c"),
+            ("total_dues",    "🔴", "Customers with Due",       str(total_dues_count),  "#e74c3c"),
+            ("today_dues",    "📅", "Customers with Due Today",  str(today_dues_count),  "#c0392b"),
         ]
 
         for idx, (key, icon, title, val, color) in enumerate(cards_data):
@@ -263,7 +282,7 @@ class HomePage(QWidget):
             self._warn_frame.show()
         else:
             self._warn_frame.hide()
-            
+
         self._apply_filters()
 
     def _on_card_clicked(self, key: str):
@@ -281,12 +300,15 @@ class HomePage(QWidget):
             "vendors":        "Vendors",
             "customers":      "Customers",
             "low_stock":      "Low Stock",
+            "total_dues":     "All Pending Dues",
+            "today_dues":     "Today's Dues",
         }
         self.lbl_metric_title.setText(f"Showing: {titles.get(key, key)}")
 
         invoice_keys = {
             "today_sales", "today_cash", "today_upi", "today_card",
-            "today_cheque", "today_invoices", "total_sales", "total_invoices"
+            "today_cheque", "today_invoices", "total_sales", "total_invoices",
+            "total_dues", "today_dues",
         }
         enable = key in invoice_keys
         self.dt_from.setEnabled(enable)
@@ -301,9 +323,10 @@ class HomePage(QWidget):
         d_from = self.dt_from.date().toString("yyyy-MM-dd")
         d_to = self.dt_to.date().toString("yyyy-MM-dd")
         today_str = date.today().isoformat()
-        
+
         data = []
         headers = []
+        _due_rows = []
 
         # ── Invoice / payment-mode metrics ────────────────────
         _pay_field = {
@@ -320,18 +343,29 @@ class HomePage(QWidget):
         if self._current_metric in (
             "today_sales", "today_invoices", "total_sales", "total_invoices",
             "today_cash", "today_upi", "today_card", "today_cheque",
+            "total_dues", "today_dues",
         ):
             pay_field = _pay_field.get(self._current_metric)
+            is_dues_metric = self._current_metric in ("total_dues", "today_dues")
             if pay_field:
                 headers = ["Inv No", "Date", "Customer", "Mobile",
                            "Grand Total", "Cash", "UPI", "Card", "Cheque", "Due"]
+            elif is_dues_metric:
+                headers = ["Inv No", "Date", "Customer", "Mobile", "Grand Total", "Due Amount", "Due Date", "Action"]
             else:
                 headers = ["Inv No", "Date", "Customer", "Mobile", "Grand Total"]
 
+            _due_rows = []
             for inv in self._all_invoices:
                 inv_dt = inv.get("date", "")
 
-                if self._current_metric in _today_only:
+                if is_dues_metric:
+                    due_val = float(inv.get("due_amount", 0) or 0)
+                    if due_val <= 0:
+                        continue
+                    if self._current_metric == "today_dues" and inv_dt != today_str:
+                        continue
+                elif self._current_metric in _today_only:
                     if inv_dt != today_str:
                         continue
                 else:
@@ -363,6 +397,19 @@ class HomePage(QWidget):
                         format_currency(inv.get("cheque_paid",   0)),
                         format_currency(inv.get("due_amount",    0)),
                     ]
+                elif is_dues_metric:
+                    due_date_val = inv.get("due_date", "") or ""
+                    row_data = [
+                        inv.get("invoice_number", ""),
+                        inv_dt,
+                        inv.get("customer_name", ""),
+                        inv.get("customer_mobile", ""),
+                        format_currency(inv.get("grand_total", 0)),
+                        format_currency(inv.get("due_amount",  0)),
+                        due_date_val,
+                    ]
+                    _due_rows.append((row_data, due_date_val == today_str, inv))
+                    continue
                 else:
                     row_data = [
                         inv.get("invoice_number", ""),
@@ -372,6 +419,11 @@ class HomePage(QWidget):
                         format_currency(inv.get("grand_total", 0)),
                     ]
                 data.append(row_data)
+
+            if is_dues_metric:
+                _due_rows.sort(key=lambda x: (not x[1], x[0][1]))
+                data = [r for r, _, _ in _due_rows]
+                headers = headers  # already set
 
         elif self._current_metric in ["stock", "low_stock"]:
             headers = ["Item Name", "Category", "Quantity", "Weight (g)", "Cost Price", "Selling Price"]
@@ -419,22 +471,40 @@ class HomePage(QWidget):
                 ]
                 data.append(row_data)
                 
-        self._populate_table(headers, data)
+        if self._current_metric in ("total_dues", "today_dues"):
+            highlight = {i for i, (_, is_today, _inv) in enumerate(_due_rows) if is_today}
+            self._populate_table(headers, data, highlight_rows=highlight)
+            for row_idx, (_, _, inv_dict) in enumerate(_due_rows):
+                btn = QPushButton("✏ Edit")
+                btn.setStyleSheet(
+                    "QPushButton{background:#2980b9;color:white;border-radius:3px;"
+                    "padding:3px 8px;font-size:11px;font-weight:bold;}"
+                    "QPushButton:hover{background:#2471a3;}"
+                )
+                btn.clicked.connect(lambda checked, i=inv_dict: self.edit_invoice_requested.emit(i))
+                self.tbl.setCellWidget(row_idx, len(headers) - 1, btn)
+        else:
+            self._populate_table(headers, data)
 
-    def _populate_table(self, headers: list, data: list):
+    def _populate_table(self, headers: list, data: list, highlight_rows: set = None):
+        from PyQt5.QtGui import QColor as _QColor
         self.tbl.setSortingEnabled(False)
         self.tbl.setColumnCount(len(headers))
         self.tbl.setHorizontalHeaderLabels(headers)
         self.tbl.setRowCount(0)
-        
+
         if len(headers) > 0:
             self.tbl.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
 
         for row_idx, row_data in enumerate(data):
             self.tbl.insertRow(row_idx)
+            is_highlight = highlight_rows is not None and row_idx in highlight_rows
             for col_idx, cell_value in enumerate(row_data):
                 item = NumericTableItem(str(cell_value))
                 item.setTextAlignment(Qt.AlignCenter)
+                if is_highlight:
+                    item.setBackground(_QColor("#fff3cd"))
+                    item.setForeground(_QColor("#856404"))
                 self.tbl.setItem(row_idx, col_idx, item)
-                
+
         self.tbl.setSortingEnabled(True)

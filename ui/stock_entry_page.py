@@ -224,23 +224,47 @@ class StockEntryPage(QWidget):
         self.in_location = _cmb(LOCATION_OPTIONS, editable=True)
         row(6, "Location", self.in_location, s0=_SEC_LBL_IN)
 
+        btn_clear_in = QPushButton("✖  Clear IN")
+        btn_clear_in.setFixedHeight(28)
+        btn_clear_in.setStyleSheet(
+            "QPushButton{background:#27ae60;color:white;border-radius:4px;"
+            "font-size:11px;font-weight:bold;border:none;padding:0 8px;}"
+            "QPushButton:hover{background:#1e8449;}"
+        )
+        btn_clear_in.clicked.connect(self._clear_in_fields)
+        g.addWidget(btn_clear_in, 6, 2, 1, 2)
+
         # ── OUT section ───────────────────────────────────
         g.addWidget(_sep_label("─  Stock OUT Details  ─", _SEC_LBL_OUT), 7, 0, 1, 4)
 
         self.out_gross_wt = _dspn(3)
-        self.out_net_wt   = _dspn(3)
-        row(8, "Gross Wt (g)", self.out_gross_wt, "Net Wt (g)", self.out_net_wt,
+        self.out_less_wt  = _dspn(3)
+        self.out_gross_wt.valueChanged.connect(self._sync_out_net_wt)
+        self.out_less_wt.valueChanged.connect(self._sync_out_net_wt)
+        row(8, "Gross Wt (g)", self.out_gross_wt, "Less Wt (g)", self.out_less_wt,
             _SEC_LBL_OUT, _SEC_LBL_OUT)
 
-        self.out_qty = _ispn(0)
-        row(9, "Qty Out", self.out_qty, s0=_SEC_LBL_OUT)
+        self.out_net_wt = _dspn(3)
+        self.out_qty    = _ispn(0)
+        row(9, "Net Wt (g)", self.out_net_wt, "Qty Out", self.out_qty,
+            _SEC_LBL_OUT, _SEC_LBL_OUT)
+
+        btn_clear_out = QPushButton("✖  Clear OUT")
+        btn_clear_out.setFixedHeight(28)
+        btn_clear_out.setStyleSheet(
+            "QPushButton{background:#c0392b;color:white;border-radius:4px;"
+            "font-size:11px;font-weight:bold;border:none;padding:0 8px;}"
+            "QPushButton:hover{background:#a93226;}"
+        )
+        btn_clear_out.clicked.connect(self._clear_out_fields)
+        g.addWidget(btn_clear_out, 10, 2, 1, 2)
 
         # ── Footer ────────────────────────────────────────
-        g.addWidget(_sep_label("", ""), 10, 0, 1, 4)
+        g.addWidget(_sep_label("", ""), 11, 0, 1, 4)
 
         self.remarks = _line("Remarks (optional)")
-        row(11, "Remarks", self.remarks)
-        g.addWidget(self.remarks, 11, 1, 1, 3)
+        row(12, "Remarks", self.remarks)
+        g.addWidget(self.remarks, 12, 1, 1, 3)
 
         btn_save = QPushButton("💾  Save Entry")
         btn_save.setFixedHeight(38)
@@ -250,7 +274,7 @@ class StockEntryPage(QWidget):
             "QPushButton:hover{background:#2471a3;}"
         )
         btn_save.clicked.connect(self._save_entry)
-        g.addWidget(btn_save, 12, 0, 1, 4)
+        g.addWidget(btn_save, 13, 0, 1, 4)
 
         g.setColumnStretch(1, 1)
         g.setColumnStretch(3, 1)
@@ -274,6 +298,7 @@ class StockEntryPage(QWidget):
             self.in_qty,
             self.in_location,
             self.out_gross_wt,
+            self.out_less_wt,
             self.out_net_wt,
             self.out_qty,
             self.remarks,
@@ -284,6 +309,7 @@ class StockEntryPage(QWidget):
                 w.returnPressed.connect(lambda idx=i: self._focus_next(idx))
             else:
                 w.installEventFilter(self)
+        self.remarks.returnPressed.connect(self._save_entry)
 
     def _focus_next(self, current_idx: int):
         nxt = current_idx + 1
@@ -429,6 +455,26 @@ class StockEntryPage(QWidget):
         self.in_net_wt.setValue(net)
         self.in_net_wt.blockSignals(False)
 
+    def _sync_out_net_wt(self):
+        net = max(0.0, round(
+            self.out_gross_wt.value()
+            - self.out_less_wt.value(), 3
+        ))
+        self.out_net_wt.blockSignals(True)
+        self.out_net_wt.setValue(net)
+        self.out_net_wt.blockSignals(False)
+
+    def _clear_in_fields(self):
+        for spn in (self.in_gross_wt, self.in_less_wt, self.in_net_wt):
+            spn.blockSignals(True); spn.setValue(0.0); spn.blockSignals(False)
+        self.in_qty.setValue(0)
+        self.in_location.setCurrentIndex(0)
+
+    def _clear_out_fields(self):
+        for spn in (self.out_gross_wt, self.out_less_wt, self.out_net_wt):
+            spn.blockSignals(True); spn.setValue(0.0); spn.blockSignals(False)
+        self.out_qty.setValue(0)
+
     # ──────────────────────────────────────────────────────
     #  Save — auto-detect IN vs OUT from filled fields
     # ──────────────────────────────────────────────────────
@@ -483,6 +529,7 @@ class StockEntryPage(QWidget):
             "location":     self.in_location.currentText() if entry_type == "IN" else "OUT",
             # OUT fields
             "out_gross_wt": self.out_gross_wt.value(),
+            "out_less_wt":  self.out_less_wt.value(),
             "out_net_wt":   self.out_net_wt.value(),
             "qty_out":      self.out_qty.value(),
             "remarks":      self.remarks.text().strip(),
@@ -761,6 +808,7 @@ class StockEntryPage(QWidget):
         self.in_qty.setValue(0)
         self.in_location.setCurrentIndex(0)
         self.out_gross_wt.setValue(0.0)
+        self.out_less_wt.setValue(0.0)
         self.out_net_wt.setValue(0.0)
         self.out_qty.setValue(0)
 

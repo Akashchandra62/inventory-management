@@ -2,7 +2,14 @@
   "permissions": {
     "allow": [
       "Bash(git add *)",
-      "Bash(python -m py_compile ui/sales_report_page.py)"
+      "Bash(python -m py_compile ui/sales_report_page.py)",
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\Dell\\\\OneDrive\\\\Desktop\\\\code\\\\JewelryBillingSystem\\\\jewelry_billing_system\" -Recurse -Directory)",
+      "Bash(Select-Object -First 20)",
+      "Bash(Format-List FullName)",
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\Dell\\\\OneDrive\\\\Desktop\\\\code\\\\JewelryBillingSystem\\\\jewelry_billing_system\" -Recurse -Force)",
+      "Bash(Select-Object FullName, PSIsContainer)",
+      "Bash(Sort-Object FullName)",
+      "Bash(Format-List)"
     ]
   }
 }

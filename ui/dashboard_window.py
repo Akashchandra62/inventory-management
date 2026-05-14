@@ -29,7 +29,7 @@ from ui.karigar_page       import KarigarPage, KarigarDirectoryPage
 NAV_ITEMS = [
     ("  Dashboard",       "home",            "D", "#f39c12"),
     ("  New Invoice",     "invoice",         "I", "#27ae60"),
-    ("  Sales Report",    "sales_report",    "S", "#2980b9"),
+    # ("  Sales Report",    "sales_report",    "S", "#2980b9"),
     ("  Invoice History", "invoice_history", "H", "#8e44ad"),
     ("  Stock",           "stock",           "S", "#16a085"),
     ("  Stock Entry",     "stock_entry",     "E", "#0e6655"),
@@ -293,6 +293,11 @@ class DashboardWindow(QMainWindow):
             p.duplicate_invoice_requested.connect(
                 lambda inv, ip=inv_page: self._open_invoice_for_duplicate(inv, ip)
             )
+
+        # Wire invoice edit from the home (dashboard) dues table
+        self._pages["home"].edit_invoice_requested.connect(
+            lambda inv, ip=inv_page: self._open_invoice_for_edit(inv, ip)
+        )
 
     _NAV_BTN_EXPANDED = """
         QPushButton {

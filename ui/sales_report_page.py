@@ -614,7 +614,8 @@ class SalesReportPage(QWidget):
             self._open_detail(self._flat_rows[row]["_inv"])
 
     def _on_selection_changed(self):
-        has_row = 0 <= self.tbl.currentRow() < len(self._flat_rows)
+        row = self.tbl.currentRow()
+        has_row = 0 <= row < len(self._flat_rows)
         self._btn_edit_inv.setEnabled(has_row)
         self._btn_dup_inv.setEnabled(has_row)
 

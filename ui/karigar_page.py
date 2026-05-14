@@ -251,9 +251,9 @@ class KarigarPage(QWidget):
         # Summary bar (Fine Gold Taken / Given / Dues) — pinned at the bottom
         vl.addWidget(self._build_summary_bar())
 
-        # Wire empty-last-row → Save button for both forms
-        self.tbl_take.on_last_empty = self._btn_save.setFocus
-        self.give_remarks.returnPressed.connect(self._btn_save.setFocus)
+        # Empty last row Enter / Give remarks Enter → save directly
+        self.tbl_take.on_last_empty = self._save
+        self.give_remarks.returnPressed.connect(self._save)
 
         self._set_mode("TAKE")
         return scroll
@@ -880,8 +880,8 @@ class KarigarPage(QWidget):
                     for it in tx.get("items",[])
                 )
                 cash_str = "—"
-                bg = QColor("#c8f5d8")   # green — TAKE
-                fg_color = QColor("#1a5e35")
+                bg = QColor("#fde8e8")   # light red — TAKE
+                fg_color = QColor("#7b1a1a")
             else:  # GIVE
                 running -= fg
                 t_give_fg += fg
@@ -892,8 +892,8 @@ class KarigarPage(QWidget):
                 nwt   = float(tx.get("give_gold_net_wt", 0) or 0)
                 touch = f"{tx.get('give_gold_tounch',0):.1f}%" if tx.get("give_gold_net_wt") else "—"
                 cash_str = f"{cash:,.2f}"
-                bg = QColor("#c8dff5")   # blue — GIVE
-                fg_color = QColor("#1a3a5e")
+                bg = QColor("#e8f8ee")   # light green — GIVE
+                fg_color = QColor("#1a5e35")
 
             running = round(running, 3)
 
@@ -1085,9 +1085,13 @@ class KarigarDirectoryPage(QWidget):
             for c, v in enumerate(vals):
                 cell = QTableWidgetItem(v)
                 cell.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter if c == 0 else Qt.AlignCenter)
-                if c == 5 and dues > 0:
-                    cell.setForeground(QColor("#c0392b"))
-                    f_font = cell.font(); f_font.setBold(True); cell.setFont(f_font)
+                if c == 5:
+                    if dues > 0:
+                        cell.setForeground(QColor("#27ae60"))
+                        f_font = cell.font(); f_font.setBold(True); cell.setFont(f_font)
+                    elif dues < 0:
+                        cell.setForeground(QColor("#c0392b"))
+                        f_font = cell.font(); f_font.setBold(True); cell.setFont(f_font)
                 self.tbl_karigars.setItem(r, c, cell)
 
     def _on_karigar_selected(self):
@@ -1123,8 +1127,8 @@ class KarigarDirectoryPage(QWidget):
                 nwt  = sum(float(it.get("net_wt",0)) for it in tx.get("items",[]))
                 tounch_s = ", ".join(f"{it.get('tounch',0):.1f}%" for it in tx.get("items",[]))
                 cash_str = "—"
-                bg = QColor("#c8f5d8")
-                row_fg = QColor("#1a5e35")
+                bg = QColor("#fde8e8")   # light red — TAKE
+                row_fg = QColor("#7b1a1a")
             else:
                 running -= fg; t_give += fg
                 parts = []
@@ -1134,8 +1138,8 @@ class KarigarDirectoryPage(QWidget):
                 nwt = float(tx.get("give_gold_net_wt",0) or 0)
                 tounch_s = f"{tx.get('give_gold_tounch',0):.1f}%" if tx.get("give_gold_net_wt") else "—"
                 cash_str = f"{cash:,.2f}"
-                bg = QColor("#c8dff5")
-                row_fg = QColor("#1a3a5e")
+                bg = QColor("#e8f8ee")   # light green — GIVE
+                row_fg = QColor("#1a5e35")
 
             running = round(running, 3)
             vals = [tx.get("date",""), tx.get("memo_no",""), tx_type, desc,
@@ -1159,7 +1163,7 @@ class KarigarDirectoryPage(QWidget):
         self.lbl_take_fg.setText(f"Fine Taken: {t_take:.3f} g")
         self.lbl_give_fg.setText(f"Fine Given: {t_give:.3f} g")
         self.lbl_dues.setText(f"Dues: {dues:.3f} g")
-        color = "#c0392b" if dues > 0 else "#27ae60"
+        color = "#c0392b" if dues < 0 else ("#27ae60" if dues > 0 else "#2c3e50")
         self.lbl_dues.setStyleSheet(f"background:transparent;color:{color};font-weight:bold;")
 
     def _reset_filters(self):

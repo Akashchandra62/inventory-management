@@ -173,6 +173,7 @@ CREATE TABLE IF NOT EXISTS stock_entries (
     net_wt       REAL    DEFAULT 0.0,
     location     TEXT    DEFAULT '',
     out_gross_wt REAL    DEFAULT 0.0,
+    out_less_wt  REAL    DEFAULT 0.0,
     out_net_wt   REAL    DEFAULT 0.0,
     qty_out      INTEGER DEFAULT 0,
     remarks      TEXT    DEFAULT '',
@@ -243,6 +244,37 @@ def _migrate(conn: sqlite3.Connection):
     for col, defn in (("aadhaar", "TEXT DEFAULT ''"), ("pan", "TEXT DEFAULT ''")):
         if col not in existing:
             conn.execute(f"ALTER TABLE customers ADD COLUMN {col} {defn}")
+
+    existing_se = {row[1] for row in conn.execute("PRAGMA table_info(stock_entries)")}
+    if "out_less_wt" not in existing_se:
+        conn.execute("ALTER TABLE stock_entries ADD COLUMN out_less_wt REAL DEFAULT 0.0")
+
+    # ── Customer uniqueness by mobile ──────────────────────────────────────
+    # Before adding the unique index, collapse any existing duplicate mobile records:
+    # keep the most-complete entry, delete the rest.
+    dup_rows = conn.execute(
+        "SELECT mobile FROM customers WHERE mobile != '' "
+        "GROUP BY mobile HAVING COUNT(*) > 1"
+    ).fetchall()
+    for dup_row in dup_rows:
+        mob = dup_row[0]
+        candidates = conn.execute(
+            "SELECT customer_id, customer_name, address, email, aadhaar, pan "
+            "FROM customers WHERE mobile = ?", (mob,)
+        ).fetchall()
+        # Score each candidate by number of non-empty fields
+        def _score(r):
+            return sum(1 for f in ("customer_name", "address", "email", "aadhaar", "pan") if r[f])
+        ranked = sorted(candidates, key=_score, reverse=True)
+        for loser in ranked[1:]:
+            conn.execute("DELETE FROM customers WHERE customer_id = ?", (loser["customer_id"],))
+
+    # Partial unique index: enforces one record per non-empty mobile number.
+    # Walk-in customers with no mobile can still coexist.
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_customers_mobile "
+        "ON customers(mobile) WHERE mobile != ''"
+    )
 
 
 def init_db():

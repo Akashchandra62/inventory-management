@@ -12,9 +12,9 @@ from app.utils import format_currency
 from app.printer_helper import save_invoice_as_pdf, preview_invoice_pdf
 
 
-_C_HEADERS  = ["ID", "Name ▲▼", "Mobile ▲▼", "Address ▲▼", "Email ▲▼"]
-_C_LABELS   = ["ID", "Name", "Mobile", "Address", "Email"]   # base labels (no indicator)
-_C_KEYS     = ["customer_id", "customer_name", "mobile", "address", "email"]
+_C_HEADERS  = ["ID", "Name ▲▼", "Mobile ▲▼", "Address ▲▼", "Email ▲▼", "Aadhaar ▲▼", "PAN ▲▼"]
+_C_LABELS   = ["ID", "Name", "Mobile", "Address", "Email", "Aadhaar", "PAN"]
+_C_KEYS     = ["customer_id", "customer_name", "mobile", "address", "email", "aadhaar", "pan"]
 _I_HEADERS  = ["Invoice No ▲▼", "Date ▲▼", "Items ▲▼", "Tax ▲▼", "Grand Total ▲▼", "Due Amount ▲▼", "Action"]
 _I_LABELS   = ["Invoice No", "Date", "Items", "Tax", "Grand Total", "Due Amount", "Action"]
 # col → invoice key (col 2 = item count is handled specially)
@@ -49,10 +49,10 @@ class CustomerPage(QWidget):
         clbl = QLabel("Customers  —  click a column header to sort")
         clbl.setStyleSheet("font-weight:bold; color:#555; font-size:11px;")
         root.addWidget(clbl)
-        self.tbl_c = QTableWidget(); self.tbl_c.setColumnCount(5)
+        self.tbl_c = QTableWidget(); self.tbl_c.setColumnCount(7)
         self.tbl_c.setHorizontalHeaderLabels(_C_HEADERS)
         hc = self.tbl_c.horizontalHeader()
-        hc.setSectionResizeMode(1, QHeaderView.Stretch)
+        hc.setSectionResizeMode(3, QHeaderView.Stretch)  # Address stretches
         hc.setCursor(Qt.PointingHandCursor)
         hc.sectionClicked.connect(self._sort_customers)
         self.tbl_c.verticalHeader().setDefaultSectionSize(42)
@@ -113,7 +113,8 @@ class CustomerPage(QWidget):
         hi.setSectionResizeMode(0, QHeaderView.Stretch)
         hi.setCursor(Qt.PointingHandCursor)
         hi.sectionClicked.connect(self._sort_invoices)
-        self.tbl_i.verticalHeader().setDefaultSectionSize(42)
+        self.tbl_i.verticalHeader().setDefaultSectionSize(46)
+        self.tbl_i.setColumnWidth(6, 240)
         self.tbl_i.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.tbl_i.setAlternatingRowColors(True); self.tbl_i.setMinimumHeight(180)
         root.addWidget(self.tbl_i)
@@ -282,13 +283,13 @@ class CustomerPage(QWidget):
                     f = cell.font(); f.setBold(True); cell.setFont(f)
                 self.tbl_i.setItem(r, c, cell)
             btn_prev = QPushButton("Preview")
-            btn_prev.setStyleSheet("background:#8e44ad; color:white; padding: 4px 8px; border-radius:3px; font-weight:bold; font-size:11px;")
+            btn_prev.setStyleSheet("background:#8e44ad; color:white; padding: 4px 6px; border-radius:3px; font-weight:bold; font-size:10px;")
             btn_prev.clicked.connect(lambda checked, i=inv: preview_invoice_pdf(i, parent=self))
             btn_dl = QPushButton("Download")
-            btn_dl.setStyleSheet("background:#27ae60; color:white; padding: 4px 8px; border-radius:3px; font-weight:bold; font-size:11px;")
+            btn_dl.setStyleSheet("background:#27ae60; color:white; padding: 4px 6px; border-radius:3px; font-weight:bold; font-size:10px;")
             btn_dl.clicked.connect(lambda checked, i=inv: save_invoice_as_pdf(i, parent=self))
             btn_container = QWidget(); bl = QHBoxLayout(btn_container)
-            bl.setContentsMargins(2, 0, 2, 0); bl.setSpacing(4); bl.setAlignment(Qt.AlignCenter)
+            bl.setContentsMargins(2, 0, 2, 0); bl.setSpacing(3); bl.setAlignment(Qt.AlignCenter)
             bl.addWidget(btn_prev); bl.addWidget(btn_dl)
             self.tbl_i.setCellWidget(r, 6, btn_container)
 
