@@ -13,44 +13,43 @@ def find_or_create_customer(
     name: str, mobile: str,
     address: str = "", email: str = "",
     aadhaar: str = "", pan: str = "",
+    gst_number: str = "",
 ) -> str:
-    """Return customer_id; phone number is the unique key.
-    If a customer with this mobile already exists, update all provided fields.
-    If no mobile is given, always create a new record (walk-in customer).
+    """Return customer_id; mobile is the unique identifier.
+    If a customer with this mobile already exists, update all supplied fields.
+    If mobile is empty, no record is created (walk-in with no traceable identity).
     """
+    if not mobile:
+        return ""
     from app.database import get_db
     with get_db() as conn:
-        if mobile:
-            row = conn.execute(
-                "SELECT customer_id FROM customers WHERE mobile = ?",
-                (mobile,),
-            ).fetchone()
-            if row:
-                # Phone matched — update every field that was supplied
-                updates = {}
-                if name:    updates["customer_name"] = name
-                if address: updates["address"]       = address
-                if email:   updates["email"]         = email
-                if aadhaar: updates["aadhaar"]       = aadhaar
-                if pan:     updates["pan"]           = pan
-                if updates:
-                    set_clause = ", ".join(f"{k} = ?" for k in updates)
-                    conn.execute(
-                        f"UPDATE customers SET {set_clause} WHERE mobile = ?",
-                        (*updates.values(), mobile),
-                    )
-                return row["customer_id"]
-
-        if not mobile:
-            return ""  # no phone number — don't create a customer record
+        row = conn.execute(
+            "SELECT customer_id FROM customers WHERE mobile = ?",
+            (mobile,),
+        ).fetchone()
+        if row:
+            updates = {}
+            if name:       updates["customer_name"] = name
+            if address:    updates["address"]       = address
+            if email:      updates["email"]         = email
+            if aadhaar:    updates["aadhaar"]       = aadhaar
+            if pan:        updates["pan"]           = pan
+            if gst_number: updates["gst_number"]    = gst_number
+            if updates:
+                set_clause = ", ".join(f"{k} = ?" for k in updates)
+                conn.execute(
+                    f"UPDATE customers SET {set_clause} WHERE customer_id = ?",
+                    (*updates.values(), row["customer_id"]),
+                )
+            return row["customer_id"]
 
         # Mobile not found — create new record
         cid = unique_id()
         conn.execute(
             "INSERT INTO customers "
-            "(customer_id, customer_name, mobile, address, email, aadhaar, pan) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (cid, name, mobile, address, email, aadhaar, pan),
+            "(customer_id, customer_name, mobile, address, email, aadhaar, pan, gst_number) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (cid, name, mobile, address, email, aadhaar, pan, gst_number),
         )
         return cid
 

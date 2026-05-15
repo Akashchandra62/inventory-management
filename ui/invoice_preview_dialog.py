@@ -18,7 +18,12 @@ except ImportError:
 class InvoicePreviewDialog(QDialog):
     """
     In-app invoice preview with Print Original / Print Duplicate / Save PDF options.
-    Uses QWebEngineView when PyQtWebEngine is installed, else falls back to QTextBrowser.
+
+    Print path:  HTML → QTextDocument → QPrintDialog → printer
+                 If no printer or user cancels → offer Save as PDF fallback.
+
+    Preview rendering: QWebEngineView (if PyQtWebEngine installed) else QTextBrowser.
+    Both paths work on Windows 7 / Windows 8 with PyQt5 ≥ 5.15.
     """
 
     def __init__(self, invoice: dict, parent=None):
@@ -26,23 +31,37 @@ class InvoicePreviewDialog(QDialog):
         self._invoice = invoice
 
         self.setWindowTitle("Invoice Preview")
-        self.setMinimumSize(920, 700)
+        self.setMinimumSize(960, 740)
         self.setWindowFlags(
-            self.windowFlags() | Qt.WindowMaximizeButtonHint | Qt.WindowMinimizeButtonHint
+            self.windowFlags()
+            | Qt.WindowMaximizeButtonHint
+            | Qt.WindowMinimizeButtonHint
         )
-        self.setStyleSheet("QDialog{background:#f5f6fa;}")
+        self.setStyleSheet("QDialog{background:#f0f2f5;}")
 
         vl = QVBoxLayout(self)
         vl.setContentsMargins(0, 0, 0, 0)
         vl.setSpacing(0)
 
         # ── Header bar ────────────────────────────────────────────
-        hdr = QLabel("   Invoice Preview")
-        hdr.setFixedHeight(42)
-        hdr.setStyleSheet(
-            "background:#2c3e50;color:white;font-size:14px;font-weight:bold;"
-            "padding-left:12px;"
+        hdr = QWidget()
+        hdr.setFixedHeight(46)
+        hdr.setStyleSheet("background:#2c3e50;")
+        hdr_l = QHBoxLayout(hdr)
+        hdr_l.setContentsMargins(16, 0, 16, 0)
+
+        hdr_title = QLabel("Invoice Preview")
+        hdr_title.setStyleSheet(
+            "color:white;font-size:14px;font-weight:bold;background:transparent;"
         )
+        inv_num = invoice.get("invoice_number", "")
+        hdr_sub = QLabel(f"  {inv_num}" if inv_num else "")
+        hdr_sub.setStyleSheet(
+            "color:#f39c12;font-size:13px;font-weight:bold;background:transparent;"
+        )
+        hdr_l.addWidget(hdr_title)
+        hdr_l.addWidget(hdr_sub)
+        hdr_l.addStretch()
         vl.addWidget(hdr)
 
         # ── Preview area ──────────────────────────────────────────
@@ -64,35 +83,44 @@ class InvoicePreviewDialog(QDialog):
 
         # ── Button bar ────────────────────────────────────────────
         btn_wrap = QWidget()
-        btn_wrap.setFixedHeight(60)
+        btn_wrap.setFixedHeight(64)
         btn_wrap.setStyleSheet(
-            "QWidget{background:#ecf0f1;border-top:1px solid #bdc3c7;}"
+            "QWidget{background:#ecf0f1;border-top:2px solid #bdc3c7;}"
         )
         btn_hl = QHBoxLayout(btn_wrap)
-        btn_hl.setContentsMargins(16, 11, 16, 11)
-        btn_hl.setSpacing(10)
+        btn_hl.setContentsMargins(20, 12, 20, 12)
+        btn_hl.setSpacing(12)
 
-        def _mk_btn(label, bg, hover):
+        def _mk_btn(label, bg, hover, min_w=160):
             b = QPushButton(label)
-            b.setFixedHeight(36)
+            b.setMinimumWidth(min_w)
+            b.setFixedHeight(38)
             b.setCursor(Qt.PointingHandCursor)
             b.setStyleSheet(
                 f"QPushButton{{background:{bg};color:white;border-radius:6px;"
-                f"font-size:12px;font-weight:600;border:none;padding:0 18px;}}"
+                f"font-size:12px;font-weight:600;border:none;padding:0 14px;}}"
                 f"QPushButton:hover{{background:{hover};}}"
+                f"QPushButton:pressed{{opacity:0.85;}}"
             )
             return b
 
-        btn_orig  = _mk_btn("Print Original",  "#27ae60", "#219a52")
-        btn_dupl  = _mk_btn("Print Duplicate", "#2980b9", "#2471a3")
-        btn_save  = _mk_btn("Save PDF",        "#8e44ad", "#7d3c98")
-        btn_close = _mk_btn("Close",           "#e74c3c", "#c0392b")
+        # Left side: hint label
+        hint = QLabel("Select copy type to print  →")
+        hint.setStyleSheet(
+            "color:#7f8c8d;font-size:11px;font-weight:600;background:transparent;"
+        )
+
+        btn_orig  = _mk_btn("🖨  Print Original",  "#27ae60", "#219a52")
+        btn_dupl  = _mk_btn("🖨  Print Duplicate", "#2980b9", "#2471a3")
+        btn_save  = _mk_btn("💾  Save PDF",        "#8e44ad", "#7d3c98", min_w=120)
+        btn_close = _mk_btn("✖  Close",            "#95a5a6", "#7f8c8d", min_w=90)
 
         btn_orig.clicked.connect(lambda: self._do_print("Original Copy"))
         btn_dupl.clicked.connect(lambda: self._do_print("Duplicate Copy"))
-        btn_save.clicked.connect(self._save_pdf)
+        btn_save.clicked.connect(lambda: self._save_pdf("Original Copy"))
         btn_close.clicked.connect(self.reject)
 
+        btn_hl.addWidget(hint)
         btn_hl.addStretch()
         btn_hl.addWidget(btn_orig)
         btn_hl.addWidget(btn_dupl)
@@ -104,7 +132,9 @@ class InvoicePreviewDialog(QDialog):
     # ── Actions ───────────────────────────────────────────────────
 
     def _do_print(self, copy_type: str):
-        """Send invoice directly to the system printer via QPrintDialog."""
+        """Render invoice HTML into QTextDocument and send to system printer via QPrintDialog.
+        Falls back to Save PDF if no printer is available or the dialog is cancelled.
+        """
         try:
             from PyQt5.QtPrintSupport import QPrinter, QPrintDialog
             from app.printer_helper import build_html_preview
@@ -118,23 +148,35 @@ class InvoicePreviewDialog(QDialog):
             printer.setPageSize(QPrinter.A4)
 
             dlg = QPrintDialog(printer, self)
-            dlg.setWindowTitle(f"Print {copy_type}")
+            dlg.setWindowTitle(f"Print  —  {copy_type}")
+
             if dlg.exec() == QPrintDialog.Accepted:
                 doc.print_(printer)
+            else:
+                # User closed the print dialog (no printer selected or cancelled)
+                self._offer_pdf_fallback(copy_type)
 
         except Exception:
             traceback.print_exc()
-            QMessageBox.critical(
-                self, "Print Error",
-                "Could not open the print dialog.\n"
-                "Please use Save PDF and print from there.",
-            )
+            self._offer_pdf_fallback(copy_type)
 
-    def _save_pdf(self):
+    def _offer_pdf_fallback(self, copy_type: str):
+        """Ask user if they want to save as PDF when printing is not possible."""
+        reply = QMessageBox.question(
+            self,
+            "No Printer Available",
+            f"Could not print {copy_type}.\n\nSave as PDF instead?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.Yes,
+        )
+        if reply == QMessageBox.Yes:
+            self._save_pdf(copy_type)
+
+    def _save_pdf(self, copy_type: str = "Original Copy"):
         """Open save-file dialog and generate a PDF for the current invoice."""
         try:
             from app.printer_helper import save_invoice_as_pdf
-            save_invoice_as_pdf(self._invoice, parent=self)
+            save_invoice_as_pdf(self._invoice, parent=self, copy_type=copy_type)
         except Exception:
             traceback.print_exc()
             QMessageBox.critical(self, "Error", "Could not save PDF.")

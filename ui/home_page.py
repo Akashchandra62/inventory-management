@@ -245,10 +245,13 @@ class HomePage(QWidget):
         today_card   = sum(float(i.get("card_paid",  0)) for i in today_inv)
         today_cheque = sum(float(i.get("cheque_paid",0)) for i in today_inv)
 
-        today_dues_count = len({i.get("customer_name", "") for i in today_inv
-                                if float(i.get("due_amount", 0) or 0) > 0})
-        total_dues_count = len({i.get("customer_name", "") for i in self._all_invoices
-                                if float(i.get("due_amount", 0) or 0) > 0})
+        _all_due_inv     = [i for i in self._all_invoices
+                            if float(i.get("due_amount", 0) or 0) > 0]
+        total_dues_count = len({(i.get("customer_mobile") or i.get("customer_name", ""))
+                                for i in _all_due_inv})
+        today_dues_count = len({(i.get("customer_mobile") or i.get("customer_name", ""))
+                                for i in _all_due_inv
+                                if (i.get("due_date") or "") == today_str})
 
         cards_data = [
             ("today_sales",   "💰", "Today's Sales",    format_currency(today_sales),   "#f39c12"),
@@ -263,8 +266,8 @@ class HomePage(QWidget):
             ("customers",     "👥", "Customers",        str(len(self._all_customers)),  "#2c3e50"),
             ("vendors",       "🏪", "Vendors",          str(len(self._all_vendors)),    "#d35400"),
             ("low_stock",     "⚠️", "Low Stock",        str(len(self._all_low_stock)),  "#e74c3c"),
-            ("total_dues",    "🔴", "Customers with Due",       str(total_dues_count),  "#e74c3c"),
-            ("today_dues",    "📅", "Customers with Due Today",  str(today_dues_count),  "#c0392b"),
+            ("total_dues",    "🔴", "Customers with Due",      str(total_dues_count),  "#e74c3c"),
+            ("today_dues",    "📅", "Customers Due Today",     str(today_dues_count),  "#c0392b"),
         ]
 
         for idx, (key, icon, title, val, color) in enumerate(cards_data):
@@ -300,8 +303,8 @@ class HomePage(QWidget):
             "vendors":        "Vendors",
             "customers":      "Customers",
             "low_stock":      "Low Stock",
-            "total_dues":     "All Pending Dues",
-            "today_dues":     "Today's Dues",
+            "total_dues":     "All Customers with Pending Dues",
+            "today_dues":     "Customers with Due Date = Today",
         }
         self.lbl_metric_title.setText(f"Showing: {titles.get(key, key)}")
 
@@ -363,7 +366,8 @@ class HomePage(QWidget):
                     due_val = float(inv.get("due_amount", 0) or 0)
                     if due_val <= 0:
                         continue
-                    if self._current_metric == "today_dues" and inv_dt != today_str:
+                    _due_dt = (inv.get("due_date") or "").strip()
+                    if self._current_metric == "today_dues" and _due_dt != today_str:
                         continue
                 elif self._current_metric in _today_only:
                     if inv_dt != today_str:

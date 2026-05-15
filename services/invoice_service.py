@@ -237,6 +237,7 @@ def create_invoice(
         customer_name, customer_mobile, customer_address, customer_email,
         aadhaar=extra.get("customer_aadhaar", "") if extra else "",
         pan=extra.get("customer_pan", "") if extra else "",
+        gst_number=extra.get("customer_gst", "") if extra else "",
     )
 
     from app.database import get_db
@@ -330,6 +331,7 @@ def update_invoice(invoice_id: str, updated_data: dict) -> bool:
         updated_data.get("customer_email", ""),
         aadhaar=updated_data.get("customer_aadhaar", ""),
         pan=updated_data.get("customer_pan", ""),
+        gst_number=updated_data.get("customer_gst", ""),
     )
     return True
 

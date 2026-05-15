@@ -70,3 +70,11 @@ UI (PyQt5, ui/)  →  Services (services/)  →  SQLite (app/database.py)
 ### Pendrive profile support
 
 A shop profile's `path` can point to any drive letter (e.g. `E:\ShopData`). When the pendrive is removed, `is_profile_available()` returns False and the profile is shown as unavailable in the selector. Data never touches the laptop for that profile.
+
+### Customer identity rules
+
+- **Mobile number is the unique identifier for a customer.** Two customers can share the same name; they cannot share a mobile number. A DB unique index (`idx_customers_mobile`) enforces this.
+- **`customer_name` cannot be null or empty** — it is required on every invoice and validated before save. It is not unique (two people can have the same name).
+- If mobile is empty, no customer record is created or updated (walk-in with no traceable identity).
+- Customer records are upserted only when an invoice is **saved**, never on field blur or typing. Do not call `update_customer()` from UI event handlers; let the invoice service handle customer persistence via `find_or_create_customer()`.
+- The phone number field shows an autocomplete dropdown in the New Invoice form. Name and email fields do **not** show dropdowns — they are plain text inputs. Selecting a phone from the dropdown fills all other fields automatically.

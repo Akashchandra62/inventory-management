@@ -9,12 +9,12 @@ from PyQt5.QtGui import QFont, QColor
 from services.customer_service import get_all_customers, delete_customer
 from services.invoice_service import get_all_invoices
 from app.utils import format_currency
-from app.printer_helper import save_invoice_as_pdf, preview_invoice_pdf
+from app.printer_helper import save_invoice_as_pdf
 
 
-_C_HEADERS  = ["ID", "Name ▲▼", "Mobile ▲▼", "Address ▲▼", "Email ▲▼", "Aadhaar ▲▼", "PAN ▲▼"]
-_C_LABELS   = ["ID", "Name", "Mobile", "Address", "Email", "Aadhaar", "PAN"]
-_C_KEYS     = ["customer_id", "customer_name", "mobile", "address", "email", "aadhaar", "pan"]
+_C_HEADERS  = ["ID", "Name ▲▼", "Mobile ▲▼", "Address ▲▼", "GST ▲▼", "Email ▲▼", "Aadhaar ▲▼", "PAN ▲▼"]
+_C_LABELS   = ["ID", "Name", "Mobile", "Address", "GST", "Email", "Aadhaar", "PAN"]
+_C_KEYS     = ["customer_id", "customer_name", "mobile", "address", "gst_number", "email", "aadhaar", "pan"]
 _I_HEADERS  = ["Invoice No ▲▼", "Date ▲▼", "Items ▲▼", "Tax ▲▼", "Grand Total ▲▼", "Due Amount ▲▼", "Action"]
 _I_LABELS   = ["Invoice No", "Date", "Items", "Tax", "Grand Total", "Due Amount", "Action"]
 # col → invoice key (col 2 = item count is handled specially)
@@ -49,7 +49,7 @@ class CustomerPage(QWidget):
         clbl = QLabel("Customers  —  click a column header to sort")
         clbl.setStyleSheet("font-weight:bold; color:#555; font-size:11px;")
         root.addWidget(clbl)
-        self.tbl_c = QTableWidget(); self.tbl_c.setColumnCount(7)
+        self.tbl_c = QTableWidget(); self.tbl_c.setColumnCount(8)
         self.tbl_c.setHorizontalHeaderLabels(_C_HEADERS)
         hc = self.tbl_c.horizontalHeader()
         hc.setSectionResizeMode(3, QHeaderView.Stretch)  # Address stretches
@@ -284,7 +284,7 @@ class CustomerPage(QWidget):
                 self.tbl_i.setItem(r, c, cell)
             btn_prev = QPushButton("Preview")
             btn_prev.setStyleSheet("background:#8e44ad; color:white; padding: 4px 6px; border-radius:3px; font-weight:bold; font-size:10px;")
-            btn_prev.clicked.connect(lambda checked, i=inv: preview_invoice_pdf(i, parent=self))
+            btn_prev.clicked.connect(lambda checked, i=inv: self._open_preview(i))
             btn_dl = QPushButton("Download")
             btn_dl.setStyleSheet("background:#27ae60; color:white; padding: 4px 6px; border-radius:3px; font-weight:bold; font-size:10px;")
             btn_dl.clicked.connect(lambda checked, i=inv: save_invoice_as_pdf(i, parent=self))
@@ -292,6 +292,10 @@ class CustomerPage(QWidget):
             bl.setContentsMargins(2, 0, 2, 0); bl.setSpacing(3); bl.setAlignment(Qt.AlignCenter)
             bl.addWidget(btn_prev); bl.addWidget(btn_dl)
             self.tbl_i.setCellWidget(r, 6, btn_container)
+
+    def _open_preview(self, invoice: dict):
+        from ui.invoice_preview_dialog import InvoicePreviewDialog
+        InvoicePreviewDialog(invoice, parent=self).exec()
 
     def _delete(self):
         row = self.tbl_c.currentRow()

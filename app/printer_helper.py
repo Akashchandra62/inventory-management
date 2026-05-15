@@ -912,8 +912,9 @@ def build_html_preview(invoice: dict, copy_type: str = "Original Copy") -> str:
 
 
 def _build_html_preview(invoice: dict, copy_type: str = "Original Copy") -> str:
-    """HTML invoice — rendered in QWebEngineView or QTextBrowser."""
+    """HTML invoice using table-based layout — no flexbox, renders in QTextBrowser and QWebEngineView."""
     from collections import OrderedDict as _OD
+
     shop     = AppConfig.shop()
     items    = invoice.get("items", [])
     subtotal = float(invoice.get("subtotal",   0))
@@ -924,7 +925,8 @@ def _build_html_preview(invoice: dict, copy_type: str = "Original Copy") -> str:
     sgst_amt = float(invoice.get("sgst_amount", round(subtotal * sgst_pct / 100, 2)))
     igst_amt = float(invoice.get("igst_amount", round(subtotal * igst_pct / 100, 2)))
     grand    = float(invoice.get("grand_total", subtotal + cgst_amt + sgst_amt + igst_amt))
-    round_off = float(invoice.get("round_off", round(grand - (subtotal + cgst_amt + sgst_amt + igst_amt), 2)))
+    round_off = float(invoice.get("round_off",
+                      round(grand - (subtotal + cgst_amt + sgst_amt + igst_amt), 2)))
     _cash_h        = float(invoice.get("cash_paid",     0))
     _upi_h         = float(invoice.get("upi_paid",      0))
     _card_h        = float(invoice.get("card_paid",     0))
@@ -932,248 +934,437 @@ def _build_html_preview(invoice: dict, copy_type: str = "Original Copy") -> str:
     _op_h          = float(invoice.get("old_purchase",  0))
     _adv_h         = float(invoice.get("advance_paid",  0))
     _refund_h      = float(invoice.get("refund_amount", 0))
-    _refund_mode_h = invoice.get("refund_mode",         "")
-    _tp_h    = _cash_h + _upi_h + _card_h + _chq_h + _op_h + _adv_h
-    total_paid_html = _tp_h if _tp_h > 0 else grand
+    _refund_mode_h = invoice.get("refund_mode", "")
+    _tp_h          = _cash_h + _upi_h + _card_h + _chq_h + _op_h + _adv_h
+    _total_paid    = _tp_h if _tp_h > 0 else grand
+    _due_h         = float(invoice.get("due_amount", 0))
+    _net_h         = round(grand - round_off, 2)
+    _excess_h      = round(_tp_h - _net_h, 2) if _tp_h > _net_h else 0.0
+    _notes         = invoice.get("notes", "")
 
-    # Build purity → metal-name lookup
+    # ── embed local image as base64 data URI ─────────────────────
+    def _img_uri(path):
+        """Return data:image/png;base64,... string, or None if file missing/unreadable."""
+        try:
+            if not os.path.exists(path):
+                return None
+            import base64
+            ext = os.path.splitext(path)[1].lower().lstrip('.')
+            mime = "image/png" if ext in ("png", "") else f"image/{ext}"
+            with open(path, "rb") as fh:
+                return f"data:{mime};base64,{base64.b64encode(fh.read()).decode()}"
+        except Exception:
+            return None
+
+    from app.constants import LOGO_FILE, QR_FILE, CERTIFICATE_FILE
+    _logo_uri  = _img_uri(LOGO_FILE)
+    _cert_uri  = _img_uri(CERTIFICATE_FILE)
+    _qr_uri    = _img_uri(QR_FILE)
+
+    # purity → metal name lookup
     try:
         from services.metal_service import get_metals as _gm2
-        _mmap = {m.get('purity','').strip().upper(): m.get('name','')
+        _mmap = {m.get('purity', '').strip().upper(): m.get('name', '')
                  for m in _gm2() if m.get('purity')}
     except Exception:
         _mmap = {}
 
-    def _mlabel(purity):
-        metal = _mmap.get(purity.strip().upper(), '')
-        return f"{metal} {purity}".strip() if metal else purity
-
-    def _item_metal(purity: str) -> str:
+    def _item_metal(purity):
         metal = _mmap.get(purity.strip().upper(), '')
         return metal if metal else purity
 
-    # Group items by metal name
+    # ── group items by (metal name, purity) ───────────────────
     _grps = _OD()
     for _it in items:
         _p  = (_it.get('purity') or 'Other').strip()
-        _mn = _item_metal(_p)
-        _grps.setdefault((_mn, _p), []).append(_it)
+        _grps.setdefault((_item_metal(_p), _p), []).append(_it)
 
-    rows_html = ""
-    serial = 0
+    # ── build item rows HTML ───────────────────────────────────
+    BD  = "border:1px solid #000;"
+    ITD = f"style='{BD}padding:3px 2px;text-align:center;font-size:10px;'"
+    ITL = f"style='{BD}padding:3px 4px;text-align:left;font-size:10px;'"
+
+    rows_html   = ""
+    serial      = 0
+    gross_total = 0.0
+    nett_total  = 0.0
+
     for (metal_name, metal_purity), grp_items in _grps.items():
         gw_grp = nw_grp = amt_grp = 0.0
         for it in grp_items:
-            gw  = float(it.get('weight', 0))
-            lw  = float(it.get('less_weight', 0))
-            nw  = round(gw - lw, 3)
-            mk     = float(it.get('making_charge', 0))
-            mk_pct = float(it.get('making_pct',    0))
-            mk_s   = f"{mk_pct:.2f}%" if mk_pct > 0 else f"&#x20B9;{mk:,.2f}"
-            gw_grp += gw; nw_grp += nw; amt_grp += float(it.get('total', 0))
+            gw      = float(it.get('weight', 0))
+            lw      = float(it.get('less_weight', 0))
+            nw      = round(gw - lw, 3)
+            mk      = float(it.get('making_charge', 0))
+            mk_pct  = float(it.get('making_pct', 0))
+            mk_s    = f"{mk_pct:.2f}%" if mk_pct > 0 else f"&#x20B9;{mk:,.2f}"
+            amt     = float(it.get('total', 0))
+            gw_grp += gw;  nw_grp += nw;  amt_grp += amt
+            gross_total += gw;  nett_total += nw
             serial += 1
             rows_html += (
                 f"<tr>"
-                f"<td>{serial}</td>"
-                f"<td>{it.get('tag','')}</td>"
-                f"<td style='text-align:left'><b>{it.get('name','')}</b>"
-                f"<br/><small style='color:#555'>{it.get('category','')}</small></td>"
-                f"<td>{it.get('huid','')}</td>"
-                f"<td>{it.get('hsn_code','7113')}</td>"
-                f"<td>{it.get('purity','')}</td>"
-                f"<td>{it.get('quantity','')}</td>"
-                f"<td>{gw:.2f}</td><td>{lw:.2f}</td><td>{nw:.2f}</td>"
-                f"<td>{float(it.get('rate',0)):.0f}</td>"
-                f"<td>{mk_s}</td>"
-                f"<td><b>&#x20B9;{float(it.get('total',0)):,.2f}</b></td>"
+                f"<td {ITD}>{serial}</td>"
+                f"<td {ITD}>{it.get('tag','')}</td>"
+                f"<td {ITL}><b>{it.get('name','')}</b>"
+                f"<br/><span style='font-size:9px;color:#555;'>{it.get('category','')}</span></td>"
+                f"<td {ITD}>{it.get('huid','')}</td>"
+                f"<td {ITD}>{it.get('hsn_code','7113')}</td>"
+                f"<td {ITD}>{it.get('purity','')}</td>"
+                f"<td {ITD}>{it.get('quantity','')}</td>"
+                f"<td {ITD}>{gw:.2f}</td>"
+                f"<td {ITD}>{lw:.2f}</td>"
+                f"<td {ITD}>{nw:.2f}</td>"
+                f"<td {ITD}>{float(it.get('rate',0)):.0f}</td>"
+                f"<td {ITD}>{mk_s}</td>"
+                f"<td {ITD}><b>&#x20B9;{amt:,.2f}</b></td>"
                 f"</tr>"
             )
-        # Metal total row — always shown
-        _grp_lbl_h = f"{metal_name} ({metal_purity})" if metal_purity and metal_purity != metal_name else metal_name
+        # metal group subtotal row
+        _grp_lbl = (f"{metal_name} ({metal_purity})"
+                    if metal_purity and metal_purity != metal_name else metal_name)
+        GSUB = "style='border:1px solid #000;border-top:1.5px solid #000;border-bottom:1.5px solid #000;"
         rows_html += (
             f"<tr style='background:#e4e4e4;font-weight:bold;'>"
-            f"<td colspan='7' style='text-align:left;padding-left:8px;'>"
-            f"{_grp_lbl_h}</td>"
-            f"<td>{gw_grp:.2f}</td>"
-            f"<td></td>"
-            f"<td>{nw_grp:.2f}</td>"
-            f"<td></td><td></td>"
-            f"<td>&#x20B9;{amt_grp:,.2f}</td>"
+            f"<td colspan='7' {GSUB}padding:3px 8px;text-align:left;font-size:10px;'><b>{_grp_lbl}</b></td>"
+            f"<td {GSUB}padding:3px 2px;text-align:center;font-size:10px;'>{gw_grp:.2f}</td>"
+            f"<td {GSUB}padding:3px 2px;text-align:center;font-size:10px;'></td>"
+            f"<td {GSUB}padding:3px 2px;text-align:center;font-size:10px;'>{nw_grp:.2f}</td>"
+            f"<td {GSUB}padding:3px 2px;text-align:center;font-size:10px;'></td>"
+            f"<td {GSUB}padding:3px 2px;text-align:center;font-size:10px;'></td>"
+            f"<td {GSUB}padding:3px 2px;text-align:center;font-size:10px;'>&#x20B9;{amt_grp:,.2f}</td>"
             f"</tr>"
         )
 
-    r_off = f"- {round_off:.2f}" if round_off != 0 else "0.00"
+    # grand totals row
+    rows_html += (
+        f"<tr style='background:#f9f9f9;font-weight:bold;'>"
+        f"<td colspan='7' style='{BD}padding:3px 2px;text-align:center;font-size:10px;'></td>"
+        f"<td {ITD}><b>{gross_total:.2f}</b></td>"
+        f"<td {ITD}></td>"
+        f"<td {ITD}><b>{nett_total:.2f}</b></td>"
+        f"<td {ITD}></td><td {ITD}></td>"
+        f"<td {ITD}><b>&#x20B9;{subtotal:,.2f}</b></td>"
+        f"</tr>"
+    )
 
-    # Pre-build conditional HTML snippets so the f-string stays clean
-    _igst_row_html = (
-        f'<div class="srow"><span>IGST @ {igst_pct}%</span>'
-        f'<span>&#x20B9; {igst_amt:.2f}</span></div>'
-        if igst_pct > 0 else ''
-    )
-    if igst_pct > 0:
-        _tax_rows_html = _igst_row_html
-    else:
-        _tax_rows_html = (
-            f'<div class="srow"><span>CGST @ {cgst_pct}%</span>'
-            f'<span>&#x20B9; {cgst_amt:.2f}</span></div>'
-            f'<div class="srow"><span>SGST @ {sgst_pct}%</span>'
-            f'<span>&#x20B9; {sgst_amt:.2f}</span></div>'
-        )
-    _due_h = float(invoice.get("due_amount", 0))
-    _net_h = round(grand - round_off, 2)
-    _tp_excess_h = _tp_h - _net_h if _tp_h > _net_h else 0.0
-    _due_row_html = (
-        f'<div class="srow" style="color:#c0392b;font-weight:bold">'
-        f'<span>Due Amount</span><span>&#x20B9; {_due_h:,.2f}</span></div>'
-        if _due_h > 0 else ''
-    )
-    _excess_row_html = (
-        f'<div class="srow" style="color:#27ae60;font-weight:bold">'
-        f'<span>Extra Paid</span><span>&#x20B9; {_tp_excess_h:,.2f}</span></div>'
-        if _tp_excess_h > 0 else ''
-    )
-    _refund_row_html = ''
+    # ── payment rows ───────────────────────────────────────────
+    PTD1 = "style='padding:2px 8px;font-size:10px;'"
+    PTD2 = "style='padding:2px 8px;font-size:10px;text-align:right;white-space:nowrap;'"
+    pay_rows = ""
+    if _cash_h > 0:
+        pay_rows += f"<tr><td {PTD1}><b>Cash</b></td><td {PTD2}>&#x20B9; {_cash_h:,.0f} /-</td></tr>"
+    if _upi_h > 0:
+        pay_rows += f"<tr><td {PTD1}><b>UPI</b></td><td {PTD2}>&#x20B9; {_upi_h:,.0f} /-</td></tr>"
+    if _card_h > 0:
+        pay_rows += f"<tr><td {PTD1}><b>Card</b></td><td {PTD2}>&#x20B9; {_card_h:,.0f} /-</td></tr>"
+    if _chq_h > 0:
+        pay_rows += f"<tr><td {PTD1}><b>Cheque</b></td><td {PTD2}>&#x20B9; {_chq_h:,.0f} /-</td></tr>"
+    if _op_h > 0:
+        pay_rows += f"<tr><td {PTD1}><b>Old Purchase (-)</b></td><td {PTD2}>&#x20B9; {_op_h:,.0f} /-</td></tr>"
+    if _adv_h > 0:
+        pay_rows += f"<tr><td {PTD1}><b>Advance (-)</b></td><td {PTD2}>&#x20B9; {_adv_h:,.0f} /-</td></tr>"
     if _refund_h > 0:
         _ref_lbl = f"Refund Given ({_refund_mode_h})" if _refund_mode_h else "Refund Given"
-        _refund_row_html = (
-            '<div style="display:flex;justify-content:space-between">'
-            f'<b>{_ref_lbl}</b>'
-            f'<span style="padding-right:6px">&#x20B9; {_refund_h:,.0f} /-</span></div>'
+        pay_rows += f"<tr><td {PTD1}><b>{_ref_lbl}</b></td><td {PTD2}>&#x20B9; {_refund_h:,.0f} /-</td></tr>"
+    pay_rows += (
+        f"<tr style='border-top:1.5px solid #000;'>"
+        f"<td style='padding:3px 8px;font-size:10px;font-weight:bold;'><b>TOTAL PAYMENT -</b></td>"
+        f"<td style='padding:3px 8px;font-size:10px;font-weight:bold;text-align:right;white-space:nowrap;'>"
+        f"<b>&#x20B9; {_total_paid:,.0f} /-</b></td>"
+        f"</tr>"
+    )
+
+    # ── GST summary rows ───────────────────────────────────────
+    STD1 = "style='padding:3px 8px;font-size:11px;border-bottom:1px solid #000;'"
+    STD2 = "style='padding:3px 8px;font-size:11px;border-bottom:1px solid #000;text-align:right;white-space:nowrap;'"
+    amt_after_gst = round(subtotal + cgst_amt + sgst_amt + igst_amt, 2)
+    r_off_str     = f"- {round_off:.2f}" if round_off != 0 else "0.00"
+
+    gst_rows = f"<tr><td {STD1}>Gross Amount</td><td {STD2}>&#x20B9; {subtotal:,.2f}</td></tr>"
+    if igst_pct > 0:
+        gst_rows += f"<tr><td {STD1}>IGST @ {igst_pct}%</td><td {STD2}>&#x20B9; {igst_amt:.2f}</td></tr>"
+    else:
+        if cgst_pct > 0:
+            gst_rows += f"<tr><td {STD1}>CGST @ {cgst_pct}%</td><td {STD2}>&#x20B9; {cgst_amt:.2f}</td></tr>"
+        if sgst_pct > 0:
+            gst_rows += f"<tr><td {STD1}>SGST @ {sgst_pct}%</td><td {STD2}>&#x20B9; {sgst_amt:.2f}</td></tr>"
+    gst_rows += (
+        f"<tr><td {STD1}>Amt After GST</td><td {STD2}>&#x20B9; {amt_after_gst:.2f}</td></tr>"
+        f"<tr><td {STD1}>Round Off</td><td {STD2}>{r_off_str}</td></tr>"
+        f"<tr style='background:#f0f0f0;'>"
+        f"<td style='padding:3px 8px;font-size:12px;font-weight:bold;"
+        f"border-top:2px solid #000;border-bottom:1px solid #000;'>Net Payable</td>"
+        f"<td style='padding:3px 8px;font-size:12px;font-weight:bold;text-align:right;"
+        f"border-top:2px solid #000;border-bottom:1px solid #000;white-space:nowrap;'>"
+        f"&#x20B9; {_net_h:,.2f}</td>"
+        f"</tr>"
+    )
+    if _due_h > 0:
+        gst_rows += (
+            f"<tr style='color:#c0392b;font-weight:bold;'>"
+            f"<td {STD1}>Due Amount</td>"
+            f"<td {STD2}>&#x20B9; {_due_h:,.2f}</td></tr>"
+        )
+    if _excess_h > 0:
+        gst_rows += (
+            f"<tr style='color:#27ae60;font-weight:bold;'>"
+            f"<td {STD1}>Extra Paid</td>"
+            f"<td {STD2}>&#x20B9; {_excess_h:,.2f}</td></tr>"
         )
 
-    mob = shop.get('mobile', '')
-    mob2 = shop.get('mobile2', '')
-    mob_str = mob + (f" / {mob2}" if mob2 else "")
+    # ── terms (numbered) ──────────────────────────────────────
+    terms_text = shop.get('terms', '')
+    terms_html = ""
+    if terms_text.strip():
+        terms_html += "<tr><td style='border-top:1px solid #000;padding:5px 8px;font-size:10px;'>"
+        terms_html += "<b><u>Terms &amp; Condition of Sale</u></b><br/>"
+        for j, line in enumerate(terms_text.split('\n'), 1):
+            if line.strip():
+                terms_html += f"{j}. {line.strip()}<br/>"
+        terms_html += "</td></tr>"
 
-    return f"""<!DOCTYPE html><html><head>
-<meta charset="UTF-8"/>
+    # ── notes ─────────────────────────────────────────────────
+    notes_html = ""
+    if _notes.strip():
+        notes_html = (
+            f"<tr><td style='border-top:1px solid #000;padding:4px 8px;font-size:10px;'>"
+            f"<b>Notes:</b> {_notes}</td></tr>"
+        )
+
+    # ── mobile string ──────────────────────────────────────────
+    mob  = shop.get('mobile', '')
+    mob2 = shop.get('mobile2', '')
+    mob_str  = mob + (f" / {mob2}" if mob2 else "")
+    initials = shop.get('shop_name', 'J')[:3].upper()
+    state_str = shop.get('state', '')
+    if shop.get('state_code', ''):
+        state_str += f"  Code : {shop.get('state_code','')}"
+
+    # ── bank detail lines ─────────────────────────────────────
+    bank_lines = "<u><b>Bank Detail :</b></u><br/>"
+    if shop.get('bank_name', ''):
+        bank_lines += f"Bank Name :- {shop.get('bank_name','')}<br/>"
+    if shop.get('account_name', ''):
+        bank_lines += f"A/c Name  :- {shop.get('account_name','')}<br/>"
+    if shop.get('account_number', ''):
+        bank_lines += f"A/c No.   :- {shop.get('account_number','')}<br/>"
+    if shop.get('bank_branch', ''):
+        bank_lines += f"Branch    :- {shop.get('bank_branch','')}<br/>"
+    if shop.get('ifsc_code', ''):
+        bank_lines += f"IFSC      :- {shop.get('ifsc_code','')}"
+
+    jur = f"SUBJECT TO {shop.get('jurisdiction','').upper()} JURISDICTION"
+
+    return f"""<!DOCTYPE html>
+<html><head><meta charset="UTF-8"/>
 <style>
-  *{{margin:0;padding:0;box-sizing:border-box;}}
-  body{{font-family:Arial,sans-serif;font-size:11px;background:#fff;padding:8px;}}
-  .invoice{{border:1.5px solid #000;width:100%;}}
-  .top-bar{{display:flex;justify-content:space-between;padding:3px 8px;
-            border-bottom:1px solid #000;font-size:10px;}}
-  .header{{display:flex;align-items:center;padding:6px 8px;
-           border-bottom:1px solid #000;gap:6px;}}
-  .logo-box{{width:70px;height:70px;border:1.5px solid #000;display:flex;
-             flex-direction:column;align-items:center;justify-content:center;
-             font-weight:900;font-size:22px;}}
-  .shop-ctr{{flex:1;text-align:center;}}
-  .shop-name{{font-size:26px;font-weight:900;}}
-  .shop-tag{{font-size:10px;font-style:italic;}}
-  .bis-box{{width:70px;height:70px;border:1.5px solid #000;display:flex;
-            flex-direction:column;align-items:center;justify-content:center;
-            font-size:8px;font-weight:700;text-align:center;}}
-  .tax-strip{{text-align:center;font-weight:700;font-size:12px;letter-spacing:3px;
-              padding:4px;border-bottom:1px solid #000;text-decoration:underline;}}
-  .info-row{{display:flex;border-bottom:1px solid #000;}}
-  .customer{{flex:1;padding:4px 8px;font-size:11px;}}
-  .inv-meta{{width:220px;border-left:1px solid #000;padding:4px 8px;font-size:11px;}}
-  .customer .r,.inv-meta .r{{display:flex;justify-content:space-between;margin-bottom:2px;}}
-  table{{width:100%;border-collapse:collapse;font-size:10px;}}
-  th{{border:1px solid #000;padding:3px;text-align:center;background:#f5f5f5;
-      font-size:9px;}}
-  td{{border:1px solid #000;padding:3px;text-align:center;}}
-  .bottom{{display:flex;border-top:1px solid #000;}}
-  .left-bot{{flex:1;border-right:1px solid #000;}}
-  .pay-box,.words-box,.bank-box{{padding:5px 8px;border-bottom:1px solid #000;}}
-  .bank-box{{border-bottom:none;}}
-  .right-bot{{width:220px;font-size:11px;}}
-  .srow{{display:flex;justify-content:space-between;padding:3px 8px;
-         border-bottom:1px solid #000;}}
-  .srow.net{{font-weight:700;font-size:12px;background:#f0f0f0;
-             border-top:2px solid #000;}}
-  .sig{{padding:8px;text-align:center;font-size:10px;border-top:1px solid #000;}}
-  .terms{{border-top:1px solid #000;padding:5px 8px;font-size:10px;}}
-  .footer{{border-top:2px solid #000;padding:3px 8px;display:flex;
-           justify-content:space-between;font-size:9px;font-weight:600;}}
-</style></head><body>
-<div class="invoice">
-  <div class="top-bar">
-    <span>GSTIN :- {shop.get('gst_number','')}</span>
-    <span>&#x936;&#x94d;&#x930;&#x940; &#x917;&#x923;&#x947;&#x936;&#x93e;&#x92f; &#x928;&#x92e;&#x903;</span>
-    <span>Mobile :- {mob_str}</span>
-  </div>
-  <div class="header">
-    <div class="logo-box" style="font-size:18px"><b>{shop.get('shop_name','')[:3].upper()}</b>
-      <div style="font-size:7px">JEWELLERS</div></div>
-    <div class="shop-ctr">
-      <div class="shop-name">{shop.get('shop_name','')}</div>
-      <div class="shop-tag">{shop.get('tagline','')}</div>
-      <div style="font-size:10px">{shop.get('address','')}</div>
-    </div>
-    <div class="bis-box">BIS<br/>HALLMARK<br/>CERTIFIED</div>
-  </div>
-  <div class="tax-strip">T A X &nbsp; I N V O I C E</div>
-  <div class="info-row">
-    <div class="customer">
-      <div class="r"><span><b>Name :-</b></span><span>{invoice.get('customer_name','')}</span></div>
-      <div class="r"><span><b>Address :-</b></span><span>{invoice.get('customer_address','')}</span></div>
-      <div class="r"><span><b>Phone No.</b></span><span>{invoice.get('customer_mobile','')}</span></div>
-      <div class="r"><span><b>Customer GST :-</b></span><span>{invoice.get('customer_gst','')}</span></div>
-    </div>
-    <div class="inv-meta">
-      <div class="r"><span><b>INVOICE DATE :</b></span><span>{invoice.get('date','')}</span></div>
-      <div class="r"><span><b>INVOICE NO. :-</b></span><span>{invoice.get('invoice_number','')}</span></div>
-      <div class="r" style="font-size:10px;margin-top:4px;border-top:1px solid #ccc;padding-top:3px">
-        <span><b>{shop.get('state','')}</b></span>
-        <span style="font-style:italic;color:#555">{copy_type}</span>
-      </div>
-    </div>
-  </div>
-  <table>
-    <thead><tr>
-      <th>S.No</th><th>Tag/Rfid</th><th style="text-align:left">Item Name</th>
-      <th>Huid/Remarks</th><th>Hsn</th><th>Purity</th><th>Pcs</th>
-      <th>Gross Wt</th><th>Less</th><th>Nett Wt</th>
-      <th>Rate</th><th>Mk/Chrg</th><th>Amount</th>
-    </tr></thead>
-    <tbody>{rows_html}</tbody>
-  </table>
-  <div class="bottom">
-    <div class="left-bot">
-      <div class="pay-box">
-        <div><u><b>Payment Detail :</b></u></div>
-        {f'<div style="display:flex;justify-content:space-between"><b>Cash</b><span style="padding-right:6px">&#x20B9; {_cash_h:,.0f} /-</span></div>' if _cash_h > 0 else ""}
-        {f'<div style="display:flex;justify-content:space-between"><b>UPI</b><span style="padding-right:6px">&#x20B9; {_upi_h:,.0f} /-</span></div>' if _upi_h > 0 else ""}
-        {f'<div style="display:flex;justify-content:space-between"><b>Card</b><span style="padding-right:6px">&#x20B9; {_card_h:,.0f} /-</span></div>' if _card_h > 0 else ""}
-        {f'<div style="display:flex;justify-content:space-between"><b>Cheque</b><span style="padding-right:6px">&#x20B9; {_chq_h:,.0f} /-</span></div>' if _chq_h > 0 else ""}
-        {f'<div style="display:flex;justify-content:space-between"><b>Old Purchase (-)</b><span style="padding-right:6px">&#x20B9; {_op_h:,.0f} /-</span></div>' if _op_h > 0 else ""}
-        {f'<div style="display:flex;justify-content:space-between"><b>Advance (-)</b><span style="padding-right:6px">&#x20B9; {_adv_h:,.0f} /-</span></div>' if _adv_h > 0 else ""}
-        {_refund_row_html}
-        <div style="display:flex;justify-content:space-between">
-          <b>TOTAL PAYMENT -</b><span style="padding-right:6px"><b>&#x20B9; {total_paid_html:,.0f} /-</b></span>
-        </div>
-      </div>
-      <div class="words-box">
-        <div><u><b>Amount In Word</b></u></div>
-        <div><i>Rupees: {amount_in_words(grand)}</i></div>
-      </div>
-      <div class="bank-box">
-        <div><u><b>Bank Detail :</b></u></div>
-        <div>Bank Name :- {shop.get('bank_name','')}</div>
-        <div>A/c No. :- {shop.get('account_number','')}</div>
-        <div>IFSC :- {shop.get('ifsc_code','')}</div>
-      </div>
-    </div>
-    <div class="right-bot">
-      <div class="srow"><span>Gross Amount</span><span>&#x20B9; {subtotal:,.2f}</span></div>
-      {_tax_rows_html}
-      <div class="srow"><span>Amt After GST</span><span>&#x20B9; {subtotal+cgst_amt+sgst_amt+igst_amt:.2f}</span></div>
-      <div class="srow"><span>Round Off</span><span>{r_off}</span></div>
-      <div class="srow net"><span>Net Payable</span><span>&#x20B9; {grand - round_off:,.2f}</span></div>
-      {_due_row_html}
-      {_excess_row_html}
-      <div class="sig">________________________<br/>Customer's Signature</div>
-    </div>
-  </div>
-  <div class="terms"><b><u>Terms &amp; Condition of Sale</u></b><br/>
-    {shop.get('terms','').replace(chr(10),'<br/>')}
-  </div>
-  <div class="footer">
-    <span>SUBJECT TO {shop.get('jurisdiction','').upper()} JURISDICTION</span>
-    <span>NOTE :- FOR ANY TYPE OF EXCHANGE OR SALE THE BILL IS COMPULSORY</span>
-    <span>Sign &amp; Seal</span>
-  </div>
-</div>
+  body {{ font-family: Arial, sans-serif; font-size: 11px;
+          background: #fff; margin: 0; padding: 6px; }}
+</style>
+</head><body>
+
+<!-- ═══ OUTER INVOICE BORDER ═══ -->
+<table width="100%" cellpadding="0" cellspacing="0"
+       style="border:1.5px solid #000; border-collapse:collapse;">
+
+  <!-- 1. TOP BAR -->
+  <tr><td style="border-bottom:1px solid #000; padding:0;">
+    <table width="100%" cellpadding="3" cellspacing="0">
+      <tr>
+        <td width="38%" style="font-size:10px;">GSTIN :- {shop.get('gst_number','')}</td>
+        <td width="24%" align="center" style="font-size:10px;">
+          &#x936;&#x94d;&#x930;&#x940; &#x917;&#x923;&#x947;&#x936;&#x93e;&#x92f; &#x928;&#x92e;&#x903;
+        </td>
+        <td width="38%" align="right" style="font-size:10px;">Mobile :- {mob_str}</td>
+      </tr>
+    </table>
+  </td></tr>
+
+  <!-- 2. HEADER: Logo | Shop Name | BIS -->
+  <tr><td style="border-bottom:1px solid #000; padding:6px 8px;">
+    <table width="100%" cellpadding="0" cellspacing="0">
+      <tr>
+        <td width="75" valign="middle" align="center">
+          {'<img src="' + _logo_uri + '" width="68" height="68" style="border:1.5px solid #000;display:block;"/>'
+           if _logo_uri else
+           '<table cellpadding="0" cellspacing="0" style="border:1.5px solid #000;width:68px;height:68px;">'
+           '<tr><td align="center" valign="middle">'
+           '<span style="font-weight:900;font-size:18px;">' + initials + '</span><br/>'
+           '<span style="font-size:7px;">JEWELLERS</span>'
+           '</td></tr></table>'}
+        </td>
+        <td align="center" valign="middle" style="padding:0 8px;">
+          <div style="font-size:24px; font-weight:900; line-height:1.2;">
+            {shop.get('shop_name','')}
+          </div>
+          <div style="font-size:10px; font-style:italic;">{shop.get('tagline','')}</div>
+          <div style="font-size:10px;">{shop.get('address','')}</div>
+        </td>
+        <td width="75" valign="middle" align="center">
+          {'<img src="' + _cert_uri + '" width="68" height="68" style="border:1.5px solid #000;display:block;"/>'
+           if _cert_uri else
+           '<table cellpadding="0" cellspacing="0" style="border:1.5px solid #000;width:68px;height:68px;">'
+           '<tr><td align="center" valign="middle">'
+           '<span style="font-size:8px;font-weight:700;line-height:1.5;">BIS<br/>HALLMARK<br/>CERTIFIED</span>'
+           '</td></tr></table>'}
+        </td>
+      </tr>
+    </table>
+  </td></tr>
+
+  <!-- 3. TAX INVOICE STRIP -->
+  <tr><td style="border-bottom:1px solid #000; text-align:center;
+                 padding:4px; font-weight:700; font-size:12px;
+                 letter-spacing:3px; text-decoration:underline;">
+    T A X &nbsp; I N V O I C E
+  </td></tr>
+
+  <!-- 4. CUSTOMER INFO | INVOICE META -->
+  <tr><td style="border-bottom:1px solid #000; padding:0;">
+    <table width="100%" cellpadding="0" cellspacing="0">
+      <tr>
+        <td valign="top" style="padding:5px 8px; border-right:1px solid #000;">
+          <table width="100%" cellpadding="2" cellspacing="0">
+            <tr>
+              <td width="32%" style="font-size:11px;"><b>Name :-</b></td>
+              <td style="font-size:11px;">{invoice.get('customer_name','')}</td>
+            </tr>
+            <tr>
+              <td style="font-size:11px;"><b>Address :-</b></td>
+              <td style="font-size:11px;">{invoice.get('customer_address','')}</td>
+            </tr>
+            <tr>
+              <td style="font-size:11px;"><b>Phone No.</b></td>
+              <td style="font-size:11px;">{invoice.get('customer_mobile','')}</td>
+            </tr>
+            <tr>
+              <td style="font-size:11px;"><b>Customer GST :-</b></td>
+              <td style="font-size:11px;">{invoice.get('customer_gst','')}</td>
+            </tr>
+          </table>
+        </td>
+        <td width="230" valign="top" style="padding:5px 8px;">
+          <table width="100%" cellpadding="2" cellspacing="0">
+            <tr>
+              <td style="font-size:11px;"><b>INVOICE DATE :</b></td>
+              <td align="right" style="font-size:11px;">{invoice.get('date','')}</td>
+            </tr>
+            <tr>
+              <td style="font-size:11px;"><b>INVOICE NO. :-</b></td>
+              <td align="right" style="font-size:11px;">{invoice.get('invoice_number','')}</td>
+            </tr>
+            <tr>
+              <td style="font-size:10px; border-top:1px solid #ccc; padding-top:3px;">
+                <b>{state_str}</b>
+              </td>
+              <td align="right"
+                  style="font-size:10px; border-top:1px solid #ccc; padding-top:3px;
+                         font-style:italic; color:#555;">
+                {copy_type}
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </td></tr>
+
+  <!-- 5. ITEMS TABLE -->
+  <tr><td style="padding:0;">
+    <table width="100%" cellpadding="0" cellspacing="0"
+           style="border-collapse:collapse; font-size:10px;">
+      <thead>
+        <tr style="background:#f5f5f5;">
+          <th style="border:1px solid #000;padding:3px 2px;font-size:9px;">S.No</th>
+          <th style="border:1px solid #000;padding:3px 2px;font-size:9px;">Tag/Rfid</th>
+          <th style="border:1px solid #000;padding:3px 4px;font-size:9px;text-align:left;">Item Name</th>
+          <th style="border:1px solid #000;padding:3px 2px;font-size:9px;">Huid/Remarks</th>
+          <th style="border:1px solid #000;padding:3px 2px;font-size:9px;">Hsn</th>
+          <th style="border:1px solid #000;padding:3px 2px;font-size:9px;">Purity</th>
+          <th style="border:1px solid #000;padding:3px 2px;font-size:9px;">Pcs</th>
+          <th style="border:1px solid #000;padding:3px 2px;font-size:9px;">Gross Wt</th>
+          <th style="border:1px solid #000;padding:3px 2px;font-size:9px;">Less</th>
+          <th style="border:1px solid #000;padding:3px 2px;font-size:9px;">Nett Wt</th>
+          <th style="border:1px solid #000;padding:3px 2px;font-size:9px;">Rate</th>
+          <th style="border:1px solid #000;padding:3px 2px;font-size:9px;">Mk/Chrg</th>
+          <th style="border:1px solid #000;padding:3px 2px;font-size:9px;">Amount</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows_html}
+      </tbody>
+    </table>
+  </td></tr>
+
+  <!-- 6. BOTTOM: Payment+Words+Bank (left) | GST Summary (right) -->
+  <tr><td style="border-top:1px solid #000; padding:0;">
+    <table width="100%" cellpadding="0" cellspacing="0">
+      <tr>
+        <!-- LEFT COLUMN -->
+        <td valign="top" style="border-right:1px solid #000;">
+
+          <!-- Payment Detail -->
+          <div style="padding:4px 8px; border-bottom:1px solid #000; font-size:10px;">
+            <u><b>Payment Detail :</b></u>
+          </div>
+          <table width="100%" cellpadding="0" cellspacing="0"
+                 style="border-bottom:1px solid #000;">
+            {pay_rows}
+          </table>
+
+          <!-- Amount in Words -->
+          <div style="padding:5px 8px; border-bottom:1px solid #000; font-size:10px;">
+            <u><b>Amount In Word</b></u><br/>
+            <i>Rupees: {amount_in_words(grand)}</i>
+          </div>
+
+          <!-- Bank Details + QR Code -->
+          <div style="padding:5px 8px; font-size:10px;">
+            {'<table width="100%" cellpadding="0" cellspacing="0"><tr>'
+             '<td valign="top">' + bank_lines + '</td>'
+             '<td width="72" valign="middle" align="center" style="padding-left:4px;">'
+             '<img src="' + _qr_uri + '" width="64" height="64"/>'
+             '</td></tr></table>'
+             if _qr_uri else bank_lines}
+          </div>
+
+        </td>
+        <!-- RIGHT COLUMN: GST Summary -->
+        <td width="230" valign="top" style="padding:0;">
+          <table width="100%" cellpadding="0" cellspacing="0">
+            {gst_rows}
+          </table>
+          <!-- Customer Signature -->
+          <div style="padding:12px 8px 8px 8px; text-align:center;
+                      font-size:10px; border-top:1px solid #000;">
+            ________________________<br/>Customer's Signature
+          </div>
+        </td>
+      </tr>
+    </table>
+  </td></tr>
+
+  <!-- 7. TERMS -->
+  {terms_html}
+
+  <!-- 8. NOTES -->
+  {notes_html}
+
+  <!-- 9. FOOTER -->
+  <tr><td style="border-top:2px solid #000; padding:3px 8px;">
+    <table width="100%" cellpadding="0" cellspacing="0">
+      <tr>
+        <td width="33%" style="font-size:9px; font-weight:600;">{jur}</td>
+        <td width="34%" align="center" style="font-size:9px; font-weight:600;">
+          NOTE :- FOR ANY TYPE OF EXCHANGE OR SALE THE BILL IS COMPULSORY
+        </td>
+        <td width="33%" align="right" style="font-size:9px; font-weight:600;">
+          Sign &amp; Seal
+        </td>
+      </tr>
+    </table>
+  </td></tr>
+
+</table>
 </body></html>"""

@@ -14,9 +14,9 @@ from app.constants import APP_NAME, APP_VERSION, LOGO_FILE
 from app.config import AppConfig
 
 from ui.invoice_page       import InvoicePage
-from ui.sales_report_page  import SalesReportPage
+from ui.sales_report_page  import SalesReportPage, ItemSalesReportPage, DatewiseSalesPage
 from ui.stock_page         import StockPage
-from ui.stock_report_page  import StockReportPage
+from ui.stock_report_page  import ItemwiseStockPage, MetalwiseStockPage, DatewiseStockPage
 from ui.stock_entry_page   import StockEntryPage
 from ui.customer_page      import CustomerPage
 from ui.settings_page      import SettingsPage
@@ -29,11 +29,9 @@ from ui.karigar_page       import KarigarPage, KarigarDirectoryPage
 NAV_ITEMS = [
     ("  Dashboard",       "home",            "D", "#f39c12"),
     ("  New Invoice",     "invoice",         "I", "#27ae60"),
-    # ("  Sales Report",    "sales_report",    "S", "#2980b9"),
     ("  Invoice History", "invoice_history", "H", "#8e44ad"),
     ("  Stock",           "stock",           "S", "#16a085"),
     ("  Stock Entry",     "stock_entry",     "E", "#0e6655"),
-    ("  Stock Report",    "stock_report",    "R", "#d35400"),
     ("  Vendor",           "karigar",           "K", "#8e44ad"),
     ("  Vendor Directory","karigar_directory", "K", "#6c3483"),
     ("  Customers",        "customers",         "C", "#1abc9c"),
@@ -204,6 +202,10 @@ class DashboardWindow(QMainWindow):
         nf.setSpacing(0)
 
         self._nav_buttons: dict[str, QPushButton] = {}
+        self._sales_sub_btns = []
+        self._sales_sub_open = False
+        self._stock_sub_btns = []
+        self._stock_sub_open = False
         for label, key, letter, color in NAV_ITEMS:
             btn = QPushButton(label)
             btn.setIcon(_nav_icon(letter, color))
@@ -229,6 +231,10 @@ class DashboardWindow(QMainWindow):
             btn.clicked.connect(lambda _, k=key: self._switch_page(k))
             nf.addWidget(btn)
             self._nav_buttons[key] = btn
+            if key == "invoice":
+                self._build_sales_submenu(nf)
+            if key == "stock_entry":
+                self._build_stock_submenu(nf)
 
         sl.addWidget(self._nav_frame)
         sl.addStretch()
@@ -265,11 +271,14 @@ class DashboardWindow(QMainWindow):
         pages = {
             "home":            HomePage(),
             "invoice":         InvoicePage(),
-            "sales_report":    SalesReportPage(),
+            "sales_datewise":  DatewiseSalesPage(),
+            "sales_itemwise":  ItemSalesReportPage(),
             "invoice_history": SalesReportPage(history_mode=True),
             "stock":           StockPage(),
             "stock_entry":     StockEntryPage(),
-            "stock_report":    StockReportPage(),
+            "stock_itemwise":   ItemwiseStockPage(),
+            "stock_metalwise":  MetalwiseStockPage(),
+            "stock_datewise":   DatewiseStockPage(),
             "karigar":           KarigarPage(),
             "karigar_directory": KarigarDirectoryPage(),
             "customers":         CustomerPage(),
@@ -283,9 +292,9 @@ class DashboardWindow(QMainWindow):
         root.addWidget(self._stack)
         self._switch_page("home")
 
-        # Wire invoice edit / duplicate from both SalesReport page instances
+        # Wire invoice edit / duplicate from report pages that support it
         inv_page = self._pages["invoice"]
-        for key in ("sales_report", "invoice_history"):
+        for key in ("sales_itemwise", "invoice_history"):
             p = self._pages[key]
             p.edit_invoice_requested.connect(
                 lambda inv, ip=inv_page: self._open_invoice_for_edit(inv, ip)
@@ -297,6 +306,11 @@ class DashboardWindow(QMainWindow):
         # Wire invoice edit from the home (dashboard) dues table
         self._pages["home"].edit_invoice_requested.connect(
             lambda inv, ip=inv_page: self._open_invoice_for_edit(inv, ip)
+        )
+
+        # Wire item-wise → date-wise stock navigation
+        self._pages["stock_itemwise"].view_datewise_requested.connect(
+            self._open_stock_datewise
         )
 
     _NAV_BTN_EXPANDED = """
@@ -327,6 +341,96 @@ class DashboardWindow(QMainWindow):
         }
         QPushButton:hover { background: #e74c3c; }
     """
+    _SUB_BTN_EXPANDED = """
+        QPushButton {
+            background: transparent; color: #aab7c4; border: none;
+            text-align: left; padding: 8px 14px 8px 44px; font-size: 12px;
+        }
+        QPushButton:hover   { background: #34495e; color: #ecf0f1; }
+        QPushButton:checked { background: #2980b9; color: white; font-weight: bold; }
+    """
+    _SUB_BTN_COLLAPSED = """
+        QPushButton { background: transparent; border: none; padding: 8px 0px; }
+        QPushButton:hover   { background: #34495e; }
+        QPushButton:checked { background: #2980b9; }
+    """
+
+    # ─────────────────────────────────────────────────────────
+    #  Sales Report submenu
+    # ─────────────────────────────────────────────────────────
+    def _build_sales_submenu(self, parent_layout):
+        self._btn_sales_parent = QPushButton("  Sales Report  ▶")
+        self._btn_sales_parent.setIcon(_nav_icon("S", "#2980b9"))
+        self._btn_sales_parent.setIconSize(QSize(20, 20))
+        self._btn_sales_parent.setCheckable(True)
+        self._btn_sales_parent.setObjectName("sidebar_btn")
+        self._btn_sales_parent.setStyleSheet(self._NAV_BTN_EXPANDED)
+        self._btn_sales_parent.clicked.connect(self._toggle_sales_submenu)
+        parent_layout.addWidget(self._btn_sales_parent)
+
+        for sub_label, sub_key in [
+            ("  ↳  Date-wise", "sales_datewise"),
+            ("  ↳  Item-wise", "sales_itemwise"),
+        ]:
+            btn = QPushButton(sub_label)
+            btn.setCheckable(True)
+            btn.setVisible(False)
+            btn.setObjectName("sidebar_subbtn")
+            btn.setStyleSheet(self._SUB_BTN_EXPANDED)
+            btn.clicked.connect(lambda _, k=sub_key: self._switch_page(k))
+            parent_layout.addWidget(btn)
+            self._nav_buttons[sub_key] = btn
+            self._sales_sub_btns.append(btn)
+
+    def _toggle_sales_submenu(self):
+        self._sales_sub_open = not self._sales_sub_open
+        show = self._sales_sub_open and self._sidebar_expanded
+        for btn in self._sales_sub_btns:
+            btn.setVisible(show)
+        if self._sidebar_expanded:
+            arrow = "  ▼" if self._sales_sub_open else "  ▶"
+            self._btn_sales_parent.setText(f"  Sales Report{arrow}")
+
+    # ─────────────────────────────────────────────────────────
+    #  Stock Report submenu
+    # ─────────────────────────────────────────────────────────
+    def _build_stock_submenu(self, parent_layout):
+        self._btn_stock_parent = QPushButton("  Stock Report  ▶")
+        self._btn_stock_parent.setIcon(_nav_icon("R", "#d35400"))
+        self._btn_stock_parent.setIconSize(QSize(20, 20))
+        self._btn_stock_parent.setCheckable(True)
+        self._btn_stock_parent.setObjectName("sidebar_btn")
+        self._btn_stock_parent.setStyleSheet(self._NAV_BTN_EXPANDED)
+        self._btn_stock_parent.clicked.connect(self._toggle_stock_submenu)
+        parent_layout.addWidget(self._btn_stock_parent)
+
+        for sub_label, sub_key in [
+            ("  ↳  Item-wise",  "stock_itemwise"),
+            ("  ↳  Metal-wise", "stock_metalwise"),
+            ("  ↳  Date-wise",  "stock_datewise"),
+        ]:
+            btn = QPushButton(sub_label)
+            btn.setCheckable(True)
+            btn.setVisible(False)
+            btn.setObjectName("sidebar_subbtn")
+            btn.setStyleSheet(self._SUB_BTN_EXPANDED)
+            btn.clicked.connect(lambda _, k=sub_key: self._switch_page(k))
+            parent_layout.addWidget(btn)
+            self._nav_buttons[sub_key] = btn
+            self._stock_sub_btns.append(btn)
+
+    def _toggle_stock_submenu(self):
+        self._stock_sub_open = not self._stock_sub_open
+        show = self._stock_sub_open and self._sidebar_expanded
+        for btn in self._stock_sub_btns:
+            btn.setVisible(show)
+        if self._sidebar_expanded:
+            arrow = "  ▼" if self._stock_sub_open else "  ▶"
+            self._btn_stock_parent.setText(f"  Stock Report{arrow}")
+
+    def _open_stock_datewise(self, item_name, purity, metal):
+        self._switch_page("stock_datewise")   # refresh() loads entries and rebuilds combos first
+        self._pages["stock_datewise"].set_item_filter(item_name, purity, metal)
 
     # ─────────────────────────────────────────────────────────
     #  Toggle sidebar
@@ -359,6 +463,40 @@ class DashboardWindow(QMainWindow):
                 self._NAV_BTN_EXPANDED if expanded else self._NAV_BTN_COLLAPSED
             )
 
+        # Sales Report parent button
+        if expanded:
+            arrow = "  ▼" if self._sales_sub_open else "  ▶"
+            self._btn_sales_parent.setText(f"  Sales Report{arrow}")
+        else:
+            self._btn_sales_parent.setText("")
+        self._btn_sales_parent.setStyleSheet(
+            self._NAV_BTN_EXPANDED if expanded else self._NAV_BTN_COLLAPSED
+        )
+
+        # Sales Report sub-buttons: only visible when expanded AND submenu is open
+        for btn in self._sales_sub_btns:
+            btn.setVisible(expanded and self._sales_sub_open)
+            btn.setStyleSheet(
+                self._SUB_BTN_EXPANDED if expanded else self._SUB_BTN_COLLAPSED
+            )
+
+        # Stock Report parent button
+        if expanded:
+            arrow = "  ▼" if self._stock_sub_open else "  ▶"
+            self._btn_stock_parent.setText(f"  Stock Report{arrow}")
+        else:
+            self._btn_stock_parent.setText("")
+        self._btn_stock_parent.setStyleSheet(
+            self._NAV_BTN_EXPANDED if expanded else self._NAV_BTN_COLLAPSED
+        )
+
+        # Stock Report sub-buttons
+        for btn in self._stock_sub_btns:
+            btn.setVisible(expanded and self._stock_sub_open)
+            btn.setStyleSheet(
+                self._SUB_BTN_EXPANDED if expanded else self._SUB_BTN_COLLAPSED
+            )
+
         # Logout button: full label when expanded, icon-only when collapsed
         self._btn_logout.setText("  Logout" if expanded else "")
         self._btn_logout.setStyleSheet(
@@ -379,6 +517,8 @@ class DashboardWindow(QMainWindow):
     def _switch_page(self, key: str):
         for k, btn in self._nav_buttons.items():
             btn.setChecked(k == key)
+        self._btn_sales_parent.setChecked(key in ("sales_datewise", "sales_itemwise"))
+        self._btn_stock_parent.setChecked(key in ("stock_itemwise", "stock_metalwise", "stock_datewise"))
         page = self._pages.get(key)
         if page:
             if hasattr(page, "refresh"):

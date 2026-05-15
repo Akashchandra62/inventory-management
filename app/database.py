@@ -62,6 +62,7 @@ CREATE TABLE IF NOT EXISTS customers (
     email         TEXT DEFAULT '',
     aadhaar       TEXT DEFAULT '',
     pan           TEXT DEFAULT '',
+    gst_number    TEXT DEFAULT '',
     notes         TEXT DEFAULT ''
 );
 
@@ -241,7 +242,11 @@ CREATE TABLE IF NOT EXISTS karigar_transactions (
 def _migrate(conn: sqlite3.Connection):
     """Add columns introduced after the initial release (safe to run on every startup)."""
     existing = {row[1] for row in conn.execute("PRAGMA table_info(customers)")}
-    for col, defn in (("aadhaar", "TEXT DEFAULT ''"), ("pan", "TEXT DEFAULT ''")):
+    for col, defn in (
+        ("aadhaar",    "TEXT DEFAULT ''"),
+        ("pan",        "TEXT DEFAULT ''"),
+        ("gst_number", "TEXT DEFAULT ''"),
+    ):
         if col not in existing:
             conn.execute(f"ALTER TABLE customers ADD COLUMN {col} {defn}")
 

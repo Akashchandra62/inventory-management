@@ -395,8 +395,8 @@ class InvoiceDetailDialog(QDialog):
             self.accept()
 
     def _preview_pdf(self):
-        from app.printer_helper import preview_invoice_pdf
-        preview_invoice_pdf(self._invoice, parent=self)
+        from ui.invoice_preview_dialog import InvoicePreviewDialog
+        InvoicePreviewDialog(self._invoice, parent=self).exec()
 
     def _download_pdf(self):
         from app.printer_helper import save_invoice_as_pdf
