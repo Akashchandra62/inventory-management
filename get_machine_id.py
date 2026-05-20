@@ -5,7 +5,6 @@ You then embed that ID into constants.py and build the locked EXE for them.
 """
 import hashlib
 import subprocess
-import sys
 import tkinter as tk
 
 
