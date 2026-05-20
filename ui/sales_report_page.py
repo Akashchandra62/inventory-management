@@ -1490,15 +1490,15 @@ _DWISE_LABELS = [
     "Date", "Invoice No.", "Customer",
     "Gross Sale ₹", "Discount ₹", "Sale Amt ₹",
     "CGST ₹", "SGST ₹", "IGST ₹",
-    "Advance ₹", "Cash ₹", "Card ₹", "Cheque ₹", "Dues ₹",
+    "Advance ₹", "Cash ₹", "Card ₹", "UPI ₹", "Cheque ₹", "Dues ₹",
 ]
-_DWISE_RIGHT = {3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13}
+_DWISE_RIGHT = {3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14}
 _DWISE_SORT_KEYS = {
     0:  "date",           1:  "invoice_number",  2:  "customer_name",
     3:  "gross_sale",     4:  "discount",        5:  "sale_amt",
     6:  "cgst",           7:  "sgst",            8:  "igst",
     9:  "advance",        10: "cash",            11: "card",
-    12: "cheque",         13: "dues",
+    12: "upi",            13: "cheque",          14: "dues",
 }
 
 
@@ -1579,11 +1579,12 @@ class DatewiseSalesPage(QWidget):
 
         cards = QHBoxLayout(); cards.setSpacing(10)
         for ctitle, default, color, attr in [
-            ("Invoices",   "0",       "#2980b9", "lbl_inv_count"),
-            ("Gross Sale", "₹ 0.00",  "#27ae60", "lbl_gross"),
-            ("Total GST",  "₹ 0.00",  "#f39c12", "lbl_gst"),
-            ("Sale Amt",   "₹ 0.00",  "#8e44ad", "lbl_sale"),
-            ("Total Dues", "₹ 0.00",  "#e74c3c", "lbl_dues"),
+            ("Invoices",            "0",       "#2980b9", "lbl_inv_count"),
+            ("Gross Sale",          "₹ 0.00",  "#27ae60", "lbl_gross"),
+            ("Total GST",           "₹ 0.00",  "#f39c12", "lbl_gst"),
+            ("Sale Amt",            "₹ 0.00",  "#8e44ad", "lbl_sale"),
+            ("Revenue Collected",   "₹ 0.00",  "#1e8449", "lbl_revenue"),
+            ("Total Dues",          "₹ 0.00",  "#e74c3c", "lbl_dues"),
         ]:
             fr = QFrame(); fr.setFixedHeight(72)
             fr.setStyleSheet(f"QFrame{{background:{color};border-radius:8px;border:none;}}")
@@ -1627,7 +1628,12 @@ class DatewiseSalesPage(QWidget):
             ("_ft_discount", "Discount:"),
             ("_ft_sale",     "Sale Amt:"),
             ("_ft_gst",      "GST:"),
+            ("_ft_revenue",  "Revenue:"),
             ("_ft_dues",     "Dues:"),
+            ("_ft_cash",     "Cash:"),
+            ("_ft_card",     "Card:"),
+            ("_ft_upi",      "UPI:"),
+            ("_ft_cheque",   "Cheque:"),
         ]:
             hl = QHBoxLayout(); hl.setSpacing(4)
             lbl = QLabel(label)
@@ -1720,6 +1726,7 @@ class DatewiseSalesPage(QWidget):
                 "advance":        float(inv.get("advance_paid", 0) or 0),
                 "cash":           float(inv.get("cash_paid",    0) or 0),
                 "card":           float(inv.get("card_paid",    0) or 0),
+                "upi":            float(inv.get("upi_paid",     0) or 0),
                 "cheque":         float(inv.get("cheque_paid",  0) or 0),
                 "dues":           float(inv.get("due_amount",   0) or 0),
             })
@@ -1770,8 +1777,10 @@ class DatewiseSalesPage(QWidget):
     # ─────────────────────────────────────────────────────────
     def _populate(self, rows):
         self.tbl.setRowCount(0)
-        t_gross = 0.0; t_disc = 0.0; t_sale = 0.0
-        t_cgst  = 0.0; t_sgst = 0.0; t_igst = 0.0; t_dues = 0.0
+        t_gross = 0.0; t_disc  = 0.0; t_sale = 0.0
+        t_cgst  = 0.0; t_sgst  = 0.0; t_igst = 0.0
+        t_cash  = 0.0; t_card  = 0.0; t_upi  = 0.0
+        t_cheq  = 0.0; t_dues  = 0.0; t_adv  = 0.0
 
         for row in rows:
             r = self.tbl.rowCount(); self.tbl.insertRow(r)
@@ -1789,6 +1798,7 @@ class DatewiseSalesPage(QWidget):
                 f"{row['advance']:,.2f}",
                 f"{row['cash']:,.2f}",
                 f"{row['card']:,.2f}",
+                f"{row['upi']:,.2f}",
                 f"{row['cheque']:,.2f}",
                 f"{dues:,.2f}",
             ]
@@ -1796,7 +1806,7 @@ class DatewiseSalesPage(QWidget):
                 cell = QTableWidgetItem(v)
                 align = Qt.AlignRight | Qt.AlignVCenter if c in _DWISE_RIGHT else Qt.AlignCenter
                 cell.setTextAlignment(align)
-                if c == 13 and dues > 0:
+                if c == 14 and dues > 0:
                     cell.setForeground(QColor("#c0392b"))
                     f = cell.font(); f.setBold(True); cell.setFont(f)
                 self.tbl.setItem(r, c, cell)
@@ -1807,13 +1817,21 @@ class DatewiseSalesPage(QWidget):
             t_cgst  += row["cgst"]
             t_sgst  += row["sgst"]
             t_igst  += row["igst"]
+            t_cash  += row["cash"]
+            t_card  += row["card"]
+            t_upi   += row["upi"]
+            t_cheq  += row["cheque"]
             t_dues  += row["dues"]
+            t_adv   += row["advance"]
 
-        t_gst = t_cgst + t_sgst + t_igst
+        t_gst      = t_cgst + t_sgst + t_igst
+        t_revenue  = round(t_sale - t_dues, 2)
+
         self.lbl_inv_count.setText(str(len(rows)))
         self.lbl_gross.setText(format_currency(t_gross))
         self.lbl_gst.setText(format_currency(t_gst))
         self.lbl_sale.setText(format_currency(t_sale))
+        self.lbl_revenue.setText(format_currency(t_revenue))
         self.lbl_dues.setText(format_currency(t_dues))
 
         if rows:
@@ -1822,7 +1840,12 @@ class DatewiseSalesPage(QWidget):
             self._ft_discount.setText(format_currency(t_disc))
             self._ft_sale.setText(format_currency(t_sale))
             self._ft_gst.setText(format_currency(t_gst))
+            self._ft_revenue.setText(format_currency(t_revenue))
             self._ft_dues.setText(format_currency(t_dues))
+            self._ft_cash.setText(format_currency(t_cash))
+            self._ft_card.setText(format_currency(t_card))
+            self._ft_upi.setText(format_currency(t_upi))
+            self._ft_cheque.setText(format_currency(t_cheq))
             self._footer.setVisible(True)
         else:
             self._footer.setVisible(False)
@@ -1841,7 +1864,7 @@ class DatewiseSalesPage(QWidget):
             fields = ["date", "invoice_number", "customer_name",
                       "gross_sale", "discount", "sale_amt",
                       "cgst", "sgst", "igst",
-                      "advance", "cash", "card", "cheque", "dues"]
+                      "advance", "cash", "card", "upi", "cheque", "dues"]
             with open(path, "w", newline="", encoding="utf-8") as f:
                 w = csv.DictWriter(f, fieldnames=fields, extrasaction="ignore")
                 w.writeheader()
@@ -1887,13 +1910,13 @@ class DatewiseSalesPage(QWidget):
             tot_fill = PatternFill("solid", fgColor="D6E4F0")
             tot_font = Font(name="Calibri", bold=True, size=11)
             mfmt     = "#,##0.00"
-            _money_c = {4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14}
+            _money_c = {4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15}
 
             xlsx_hdrs = [
                 "Date", "Invoice No.", "Customer",
                 "Gross Sale ₹", "Discount ₹", "Sale Amt ₹",
                 "CGST ₹", "SGST ₹", "IGST ₹",
-                "Advance ₹", "Cash ₹", "Card ₹", "Cheque ₹", "Dues ₹",
+                "Advance ₹", "Cash ₹", "Card ₹", "UPI ₹", "Cheque ₹", "Dues ₹",
             ]
             for c, h in enumerate(xlsx_hdrs, 1):
                 cell = ws.cell(row=1, column=c, value=h)
@@ -1908,7 +1931,7 @@ class DatewiseSalesPage(QWidget):
                     row["gross_sale"],  row["discount"],       row["sale_amt"],
                     row["cgst"],        row["sgst"],           row["igst"],
                     row["advance"],     row["cash"],           row["card"],
-                    row["cheque"],      row["dues"],
+                    row["upi"],         row["cheque"],         row["dues"],
                 ]
                 for c, v in enumerate(data, 1):
                     cell = ws.cell(row=ri, column=c, value=v)
@@ -1935,8 +1958,9 @@ class DatewiseSalesPage(QWidget):
                 10: sum(r["advance"]    for r in self._rows),
                 11: sum(r["cash"]       for r in self._rows),
                 12: sum(r["card"]       for r in self._rows),
-                13: sum(r["cheque"]     for r in self._rows),
-                14: sum(r["dues"]       for r in self._rows),
+                13: sum(r["upi"]        for r in self._rows),
+                14: sum(r["cheque"]     for r in self._rows),
+                15: sum(r["dues"]       for r in self._rows),
             }
             for c, v in totals_map.items():
                 cell = ws.cell(row=tr, column=c, value=v)
@@ -1966,15 +1990,22 @@ class DatewiseSalesPage(QWidget):
             p.alignment = lft
             ws2.append([])
             sub_fill = PatternFill("solid", fgColor="D6E4F0")
+            _t_sale = sum(r["sale_amt"] for r in self._rows)
+            _t_dues = sum(r["dues"]     for r in self._rows)
             for row_label, val, fmt in [
-                ("Invoices",         len(self._rows),                              None),
-                ("Gross Sale (₹)", sum(r["gross_sale"] for r in self._rows),  mfmt),
-                ("Discount (₹)",   sum(r["discount"]   for r in self._rows),  mfmt),
-                ("Sale Amt (₹)",   sum(r["sale_amt"]   for r in self._rows),  mfmt),
-                ("CGST (₹)",       sum(r["cgst"]       for r in self._rows),  mfmt),
-                ("SGST (₹)",       sum(r["sgst"]       for r in self._rows),  mfmt),
-                ("IGST (₹)",       sum(r["igst"]       for r in self._rows),  mfmt),
-                ("Total Dues (₹)", sum(r["dues"]       for r in self._rows),  mfmt),
+                ("Invoices",                len(self._rows),                              None),
+                ("Gross Sale (₹)",        sum(r["gross_sale"] for r in self._rows),  mfmt),
+                ("Discount (₹)",          sum(r["discount"]   for r in self._rows),  mfmt),
+                ("Sale Amt (₹)",          _t_sale,                                   mfmt),
+                ("CGST (₹)",              sum(r["cgst"]       for r in self._rows),  mfmt),
+                ("SGST (₹)",              sum(r["sgst"]       for r in self._rows),  mfmt),
+                ("IGST (₹)",              sum(r["igst"]       for r in self._rows),  mfmt),
+                ("Revenue Collected (₹)", round(_t_sale - _t_dues, 2),               mfmt),
+                ("Total Dues (₹)",        _t_dues,                                   mfmt),
+                ("  Cash (₹)",            sum(r["cash"]       for r in self._rows),  mfmt),
+                ("  Card (₹)",            sum(r["card"]       for r in self._rows),  mfmt),
+                ("  UPI (₹)",             sum(r["upi"]        for r in self._rows),  mfmt),
+                ("  Cheque (₹)",          sum(r["cheque"]     for r in self._rows),  mfmt),
             ]:
                 r_idx = ws2.max_row + 1
                 lc = ws2.cell(r_idx, 1, row_label)

@@ -967,8 +967,11 @@ class SettingsPage(QWidget):
             def eventFilter(self_, obj, event):
                 if (event.type() == QEvent.KeyPress and
                         event.key() in (Qt.Key_Return, Qt.Key_Enter)):
-                    if self_._combo.view().isVisible():
-                        return False          # popup open: let Qt select the item
+                    c = self_._combo.completer()
+                    if c is not None and c.popup().isVisible():
+                        if c.popup().currentIndex().isValid():
+                            return False      # item highlighted: let completer select it
+                        c.popup().hide()      # popup open, nothing highlighted: close it
                     _focus_select(self._new_item_group)
                     return True
                 return False
@@ -1005,6 +1008,14 @@ class SettingsPage(QWidget):
 
         sec_l.addLayout(add_row1)
         sec_l.addLayout(add_row2)
+
+        self._item_err_lbl = QLabel("")
+        self._item_err_lbl.setStyleSheet(
+            "color:#e74c3c; font-size:11px; font-weight:bold; padding:4px 8px;"
+            "background:#fdf2f2; border:1px solid #f5c6c6; border-radius:4px;"
+        )
+        self._item_err_lbl.setVisible(False)
+        sec_l.addWidget(self._item_err_lbl)
 
         # Divider
         div = QFrame(); div.setFrameShape(QFrame.HLine)
@@ -1118,11 +1129,12 @@ class SettingsPage(QWidget):
         )
 
     def _make_catalog_row(self, entry: dict) -> QWidget:
-        name   = entry.get("name",     "")
-        cat    = entry.get("category", "")
-        code   = entry.get("code",     "")
-        group  = entry.get("group",    "")
-        purity = entry.get("purity",   "")
+        name       = entry.get("name",       "")
+        cat        = entry.get("category",   "")
+        code       = entry.get("code",       "")
+        group      = entry.get("group",      "")
+        purity     = entry.get("purity",     "")
+        metal_name = entry.get("metal_name", "")
 
         card = QFrame()
         card.setFixedHeight(52)
@@ -1164,6 +1176,15 @@ class SettingsPage(QWidget):
             )
             lbl_grp.setFixedHeight(22)
             hl.addWidget(lbl_grp)
+
+        if metal_name:
+            lbl_metal = QLabel(metal_name)
+            lbl_metal.setStyleSheet(
+                "background:#e8f5e9;color:#2e7d32;font-size:10px;font-weight:700;"
+                "border-radius:4px;padding:2px 8px;border:none;"
+            )
+            lbl_metal.setFixedHeight(20)
+            hl.addWidget(lbl_metal)
 
         if purity:
             lbl_pur = QLabel(purity)
@@ -1209,34 +1230,43 @@ class SettingsPage(QWidget):
         return card
 
     def _add_catalog_item(self):
-        name = self._new_item_name.text().strip()
-        if not name:
-            return
-        cat    = ""
-        code   = self._new_item_code.text().strip().upper()
-        purity = self._new_item_purity.text().strip()
-        group  = self._new_item_group.text().strip()
+        self._item_err_lbl.setVisible(False)
 
-        cur_text   = self._new_item_metal.currentText().strip()
-        all_m      = getattr(self, '_all_metals', None) or get_metals()
-        matched_m  = next(
+        name     = self._new_item_name.text().strip()
+        cur_text = self._new_item_metal.currentText().strip()
+        all_m    = getattr(self, '_all_metals', None) or get_metals()
+        matched_m = next(
             (x for x in all_m if f"{x['name']} – {x['purity']}" == cur_text), None
         )
-        metal_id = matched_m.get("metal_id", "") if matched_m else ""
-        rate = labour = 0.0
-        if matched_m:
-            rate   = matched_m.get("rate",   0.0)
-            labour = matched_m.get("labour", 0.0)
-            if not purity:
-                purity = matched_m.get("purity", "")
+        purity = self._new_item_purity.text().strip()
+        if matched_m and not purity:
+            purity = matched_m.get("purity", "")
+
+        errs = []
+        if not name:      errs.append("Item Name is required")
+        if not matched_m: errs.append("Metal is required — select from the list")
+        if not purity:    errs.append("Purity is required")
+        if errs:
+            self._item_err_lbl.setText("⚠  " + "  ·  ".join(errs) + ".")
+            self._item_err_lbl.setVisible(True)
+            return
+
+        cat    = ""
+        code   = self._new_item_code.text().strip().upper()
+        group  = self._new_item_group.text().strip()
+        metal_id = matched_m.get("metal_id", "")
+        rate     = matched_m.get("rate",   0.0)
+        labour   = matched_m.get("labour", 0.0)
 
         ok = add_catalog_item(name, cat, purity, code, group, metal_id, rate, labour)
         if not ok:
             purity_hint = f" ({purity})" if purity else ""
-            code_hint   = f'\n  or code "{code}" is already taken' if code else ""
-            QMessageBox.warning(self, "Duplicate",
-                f'"{name}{purity_hint}" already exists.{code_hint}')
+            code_hint   = f"  ·  code \"{code}\" is already taken" if code else ""
+            self._item_err_lbl.setText(
+                f'⚠  "{name}{purity_hint}" already exists.{code_hint}')
+            self._item_err_lbl.setVisible(True)
             return
+        self._item_err_lbl.setVisible(False)
         self._new_item_name.clear()
         self._new_item_code.clear()
         self._new_item_metal.clearEditText()
@@ -1273,6 +1303,11 @@ class SettingsPage(QWidget):
         txt_name   = _txt(old_name,                "Item name *")
         txt_code   = _txt(entry.get("code",   ""), "Code (shortcut)")
         txt_purity = _txt(entry.get("purity", ""), "Purity")
+        txt_purity.setReadOnly(True)
+        txt_purity.setStyleSheet(
+            "QLineEdit{border:1px solid #ced4da;border-radius:6px;"
+            "padding:0 10px;font-size:13px;background:#f0f0f0;color:#888;}"
+        )
         txt_group  = _txt(entry.get("group",  ""), "Group")
 
         # ── Editable + searchable metal combo ────────────────
@@ -1311,13 +1346,13 @@ class SettingsPage(QWidget):
         def _on_metal_text(text):
             m = next((x for x in metals
                       if f"{x['name']} – {x['purity']}" == text.strip()), None)
-            if m and not txt_purity.text():
+            if m:
                 txt_purity.setText(m.get("purity", ""))
         cmb_metal.editTextChanged.connect(_on_metal_text)
 
-        # Selecting from popup → focus purity + select all
+        # Selecting from popup → skip read-only purity, go straight to group
         mc.activated[str].connect(lambda _: QTimer.singleShot(
-            0, lambda: (txt_purity.setFocus(), txt_purity.selectAll())))
+            0, lambda: (txt_group.setFocus(), txt_group.selectAll())))
 
         fl = QFormLayout(); fl.setSpacing(8)
         fl.addRow(_lbl("Item Name *"), txt_name)
@@ -1346,8 +1381,12 @@ class SettingsPage(QWidget):
             def eventFilter(self_, obj, event):
                 if (event.type() == QEvent.KeyPress and
                         event.key() in (Qt.Key_Return, Qt.Key_Enter)):
-                    if self_._combo is not None and self_._combo.view().isVisible():
-                        return False      # popup open: let Qt select item first
+                    if self_._combo is not None:
+                        c = self_._combo.completer()
+                        if c is not None and c.popup().isVisible():
+                            if c.popup().currentIndex().isValid():
+                                return False  # item highlighted: let completer select it
+                            c.popup().hide()  # popup open, nothing highlighted: close it
                     if self_._nxt is None:
                         self_._dlg.accept()
                     else:
@@ -1363,7 +1402,7 @@ class SettingsPage(QWidget):
 
         dlg._nav1 = _Nav(txt_code,   dlg, parent=dlg)
         dlg._nav2 = _Nav(cmb_metal,  dlg, parent=dlg)
-        dlg._nav3 = _Nav(txt_purity, dlg, combo=cmb_metal, parent=dlg)
+        dlg._nav3 = _Nav(txt_group,  dlg, combo=cmb_metal, parent=dlg)
         dlg._nav4 = _Nav(txt_group,  dlg, parent=dlg)
         dlg._nav5 = _Nav(None,       dlg, parent=dlg)
         txt_name.installEventFilter(dlg._nav1)

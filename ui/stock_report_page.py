@@ -600,9 +600,9 @@ class MetalwiseStockPage(QWidget):
 # ============================================================
 #  Date-wise
 # ============================================================
-_DW_LABELS    = ["Date", "Wt In (g)", "Wt Out (g)", "Closing (g)", "IN Pcs", "Out Pcs", "Stock Pcs"]
-_DW_RIGHT     = {1, 2, 3, 4, 5, 6}
-_DW_SORT_KEYS = {0:"date", 1:"wt_in", 2:"wt_out", 3:"closing_wt", 4:"in_pcs", 5:"out_pcs", 6:"stock_pcs"}
+_DW_LABELS    = ["Date", "Metal", "Wt In (g)", "Wt Out (g)", "Closing (g)", "IN Pcs", "Out Pcs", "Stock Pcs"]
+_DW_RIGHT     = {2, 3, 4, 5, 6, 7}
+_DW_SORT_KEYS = {0:"date", 1:"metal_type", 2:"wt_in", 3:"wt_out", 4:"closing_wt", 5:"in_pcs", 6:"out_pcs", 7:"stock_pcs"}
 
 
 class DatewiseStockPage(QWidget):
@@ -617,6 +617,8 @@ class DatewiseStockPage(QWidget):
         self._filter_purity  = ""
         self._filter_metal   = ""
         self._final_closing  = 0.0
+        self._period_wt_in   = 0.0
+        self._period_wt_out  = 0.0
         self._build_ui()
 
     def _build_ui(self):
@@ -692,8 +694,16 @@ class DatewiseStockPage(QWidget):
         self._filter_purity = purity
         self._filter_metal  = metal
         self._update_banner()
-        # Sync combos silently
-        for cmb, val in [(self.cmb_item, item_name), (self.cmb_metal, metal), (self.cmb_purity, purity)]:
+        # Set metal first so we can rebuild the purity list for that metal
+        if metal:
+            idx = self.cmb_metal.findText(metal)
+            if idx >= 0:
+                self.cmb_metal.blockSignals(True)
+                self.cmb_metal.setCurrentIndex(idx)
+                self.cmb_metal.blockSignals(False)
+            self._update_purity(metal)   # rebuild purity list for this metal
+        # Now set purity and item
+        for cmb, val in [(self.cmb_purity, purity), (self.cmb_item, item_name)]:
             idx = cmb.findText(val)
             if idx >= 0:
                 cmb.blockSignals(True); cmb.setCurrentIndex(idx); cmb.blockSignals(False)
@@ -750,8 +760,11 @@ class DatewiseStockPage(QWidget):
         self._update_purity(metal); self._compute()
 
     def _on_item_changed(self, item_name):
+        # Always clear the item-wise navigation context when user picks manually
+        self._filter_metal = ""
+        self._filter_purity = ""
         if item_name == "All":
-            self._filter_item = self._filter_purity = self._filter_metal = ""
+            self._filter_item = ""
         else:
             self._filter_item = item_name
         self._update_banner(); self._compute()
@@ -777,23 +790,29 @@ class DatewiseStockPage(QWidget):
             elif to_s and d > to_s:    pass
             else:                      period.append(e)
 
-        # Opening balance before range
-        open_wt = 0.0; open_pcs = 0
+        # Opening balance per metal before range
+        open_by_metal = {}
         for e in before:
+            mt = e.get("metal_type", "") or ""
+            if mt not in open_by_metal:
+                open_by_metal[mt] = {"wt": 0.0, "pcs": 0}
             if e.get("entry_type") == "IN":
-                open_wt  += float(e.get("net_wt",    0) or 0)
-                open_pcs += int(e.get("qty_in",      0) or 0)
+                open_by_metal[mt]["wt"]  += float(e.get("net_wt",    0) or 0)
+                open_by_metal[mt]["pcs"] += int(e.get("qty_in",      0) or 0)
             else:
-                open_wt  -= float(e.get("out_net_wt", 0) or 0)
-                open_pcs -= int(e.get("qty_out",      0) or 0)
+                open_by_metal[mt]["wt"]  -= float(e.get("out_net_wt", 0) or 0)
+                open_by_metal[mt]["pcs"] -= int(e.get("qty_out",      0) or 0)
 
-        # Aggregate by date
-        by_date = {}
+        # Aggregate by (date, metal_type)
+        by_date_metal = {}
         for e in period:
-            d = e.get("voucher_date","") or "Unknown"
-            if d not in by_date:
-                by_date[d] = {"date": d, "wt_in": 0.0, "wt_out": 0.0, "in_pcs": 0, "out_pcs": 0}
-            g = by_date[d]
+            d  = e.get("voucher_date", "") or "Unknown"
+            mt = e.get("metal_type",   "") or ""
+            key = (d, mt)
+            if key not in by_date_metal:
+                by_date_metal[key] = {"date": d, "metal_type": mt,
+                                      "wt_in": 0.0, "wt_out": 0.0, "in_pcs": 0, "out_pcs": 0}
+            g = by_date_metal[key]
             if e.get("entry_type") == "IN":
                 g["wt_in"]  += float(e.get("net_wt",    0) or 0)
                 g["in_pcs"] += int(e.get("qty_in",      0) or 0)
@@ -801,18 +820,35 @@ class DatewiseStockPage(QWidget):
                 g["wt_out"]  += float(e.get("out_net_wt", 0) or 0)
                 g["out_pcs"] += int(e.get("qty_out",      0) or 0)
 
-        # Build rows with cumulative closing (always sorted by date for correctness)
+        # Per-metal cumulative running totals (compute in date order)
+        metals_in_period = sorted({mt for (_, mt) in by_date_metal})
+        run_by_metal = {
+            mt: {"wt": open_by_metal.get(mt, {}).get("wt", 0.0),
+                 "pcs": open_by_metal.get(mt, {}).get("pcs", 0)}
+            for mt in metals_in_period
+        }
         rows = []
-        run_wt = open_wt; run_pcs = open_pcs
-        for d in sorted(by_date.keys()):
-            g = by_date[d]
-            run_wt  = round(run_wt  + g["wt_in"]  - g["wt_out"],  3)
-            run_pcs = run_pcs + g["in_pcs"] - g["out_pcs"]
-            rows.append({"date": d, "wt_in": g["wt_in"], "wt_out": g["wt_out"],
-                         "closing_wt": run_wt, "in_pcs": g["in_pcs"],
-                         "out_pcs": g["out_pcs"], "stock_pcs": run_pcs})
+        for d in sorted({d for (d, _) in by_date_metal}):
+            for mt in metals_in_period:
+                key = (d, mt)
+                if key not in by_date_metal:
+                    continue
+                g = by_date_metal[key]
+                run_by_metal[mt]["wt"]  = round(run_by_metal[mt]["wt"] + g["wt_in"] - g["wt_out"], 3)
+                run_by_metal[mt]["pcs"] = run_by_metal[mt]["pcs"] + g["in_pcs"] - g["out_pcs"]
+                rows.append({
+                    "date":       d,
+                    "metal_type": mt,
+                    "wt_in":      g["wt_in"],
+                    "wt_out":     g["wt_out"],
+                    "closing_wt": run_by_metal[mt]["wt"],
+                    "in_pcs":     g["in_pcs"],
+                    "out_pcs":    g["out_pcs"],
+                    "stock_pcs":  run_by_metal[mt]["pcs"],
+                })
 
-        self._final_closing = rows[-1]["closing_wt"] if rows else round(open_wt, 3)
+        self._final_closing = sum(v["wt"] for v in run_by_metal.values()) if run_by_metal else round(
+            sum(v["wt"] for v in open_by_metal.values()), 3)
         self._period_wt_in  = sum(r["wt_in"]  for r in rows)
         self._period_wt_out = sum(r["wt_out"] for r in rows)
 
@@ -831,7 +867,7 @@ class DatewiseStockPage(QWidget):
 
     def _apply_sort(self, data):
         if self._sort_col < 0 or self._sort_col not in _DW_SORT_KEYS:
-            return sorted(data, key=lambda x: x.get("date",""))
+            return sorted(data, key=lambda x: (x.get("date",""), x.get("metal_type","")))
         k = _DW_SORT_KEYS[self._sort_col]
         def _key(r):
             v = r.get(k, "")
@@ -851,21 +887,22 @@ class DatewiseStockPage(QWidget):
         for g in data:
             r = self.tbl.rowCount(); self.tbl.insertRow(r)
             closing = g["closing_wt"]; stock = g["stock_pcs"]
-            vals = [g.get("date",""), f"{g['wt_in']:.3f}", f"{g['wt_out']:.3f}", f"{closing:.3f}",
+            vals = [g.get("date",""), g.get("metal_type",""),
+                    f"{g['wt_in']:.3f}", f"{g['wt_out']:.3f}", f"{closing:.3f}",
                     str(g["in_pcs"]), str(g["out_pcs"]), str(stock)]
             for c, v in enumerate(vals):
                 cell = QTableWidgetItem(v)
                 cell.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter if c in _DW_RIGHT
                                       else Qt.AlignLeft | Qt.AlignVCenter)
-                if c == 3: cell.setForeground(QColor("#1e8449") if closing > 0 else QColor("#e74c3c"))
-                if c == 6 and stock <= 0: cell.setForeground(QColor("#e74c3c"))
+                if c == 4: cell.setForeground(QColor("#1e8449") if closing > 0 else QColor("#e74c3c"))
+                if c == 7 and stock <= 0: cell.setForeground(QColor("#e74c3c"))
                 self.tbl.setItem(r, c, cell)
             t_in += g["wt_in"]; t_out += g["wt_out"]
             t_in_pcs += g["in_pcs"]; t_out_pcs += g["out_pcs"]
 
         if data:
             net = round(t_in - t_out, 3)
-            _footer_row(self.tbl, ["TOTAL", f"{t_in:.3f}", f"{t_out:.3f}", f"{net:.3f}",
+            _footer_row(self.tbl, ["TOTAL", "", f"{t_in:.3f}", f"{t_out:.3f}", f"{net:.3f}",
                                    str(t_in_pcs), str(t_out_pcs), ""])
 
         self._sum_lbls[0].setText(f"Days: {len(data)}")
@@ -884,9 +921,9 @@ class DatewiseStockPage(QWidget):
         if not path: return
         with open(path, "w", newline="", encoding="utf-8") as f:
             w = csv.writer(f)
-            w.writerow(["Date","Wt In (g)","Wt Out (g)","Closing (g)","IN Pcs","Out Pcs","Stock Pcs"])
+            w.writerow(["Date","Metal","Wt In (g)","Wt Out (g)","Closing (g)","IN Pcs","Out Pcs","Stock Pcs"])
             for g in self._rows:
-                w.writerow([g.get("date",""),
+                w.writerow([g.get("date",""), g.get("metal_type",""),
                             f"{g.get('wt_in',0):.3f}", f"{g.get('wt_out',0):.3f}", f"{g.get('closing_wt',0):.3f}",
                             g.get("in_pcs",0), g.get("out_pcs",0), g.get("stock_pcs",0)])
         QMessageBox.information(self, "Saved", f"Saved to:\n{path}")
@@ -902,20 +939,20 @@ class DatewiseStockPage(QWidget):
         if not path: return
         try:
             wb = openpyxl.Workbook(); ws = wb.active; ws.title = "Date-wise Stock"
-            hdrs = ["Date","Wt In (g)","Wt Out (g)","Closing (g)","IN Pcs","Out Pcs","Stock Pcs"]
+            hdrs = ["Date","Metal","Wt In (g)","Wt Out (g)","Closing (g)","IN Pcs","Out Pcs","Stock Pcs"]
             ws.append(hdrs)
             hf = PatternFill("solid", fgColor="2C3E50"); hfont = Font(bold=True, color="FFFFFF")
             for cell in ws[1]: cell.fill = hf; cell.font = hfont; cell.alignment = Alignment(horizontal="center")
-            _money = {2,3,4}
+            _money = {3, 4, 5}
             for g in self._rows:
-                ws.append([g.get("date",""),
+                ws.append([g.get("date",""), g.get("metal_type",""),
                            round(g.get("wt_in",0),3), round(g.get("wt_out",0),3), round(g.get("closing_wt",0),3),
                            g.get("in_pcs",0), g.get("out_pcs",0), g.get("stock_pcs",0)])
             for row in ws.iter_rows(min_row=2, max_row=ws.max_row):
                 for cell in row:
                     if cell.column in _money: cell.number_format = "#,##0.000"
-            ws.column_dimensions["A"].width = 14
-            for col_l in ["B","C","D","E","F","G"]: ws.column_dimensions[col_l].width = 14
+            ws.column_dimensions["A"].width = 14; ws.column_dimensions["B"].width = 14
+            for col_l in ["C","D","E","F","G","H"]: ws.column_dimensions[col_l].width = 14
             wb.save(path)
             QMessageBox.information(self, "Saved", f"Excel saved to:\n{path}")
             try: os.startfile(path)

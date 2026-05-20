@@ -382,6 +382,17 @@ class DashboardWindow(QMainWindow):
             self._nav_buttons[sub_key] = btn
             self._sales_sub_btns.append(btn)
 
+    def _restore_active_checks(self):
+        """Re-sync all sidebar check states to whichever page is currently visible."""
+        current = self._stack.currentWidget()
+        current_key = next((k for k, p in self._pages.items() if p == current), None)
+        for k, btn in self._nav_buttons.items():
+            btn.setChecked(k == current_key)
+        self._btn_sales_parent.setChecked(
+            current_key in ("sales_datewise", "sales_itemwise"))
+        self._btn_stock_parent.setChecked(
+            current_key in ("stock_itemwise", "stock_metalwise", "stock_datewise"))
+
     def _toggle_sales_submenu(self):
         self._sales_sub_open = not self._sales_sub_open
         show = self._sales_sub_open and self._sidebar_expanded
@@ -390,6 +401,7 @@ class DashboardWindow(QMainWindow):
         if self._sidebar_expanded:
             arrow = "  ▼" if self._sales_sub_open else "  ▶"
             self._btn_sales_parent.setText(f"  Sales Report{arrow}")
+        self._restore_active_checks()
 
     # ─────────────────────────────────────────────────────────
     #  Stock Report submenu
@@ -427,6 +439,7 @@ class DashboardWindow(QMainWindow):
         if self._sidebar_expanded:
             arrow = "  ▼" if self._stock_sub_open else "  ▶"
             self._btn_stock_parent.setText(f"  Stock Report{arrow}")
+        self._restore_active_checks()
 
     def _open_stock_datewise(self, item_name, purity, metal):
         self._switch_page("stock_datewise")   # refresh() loads entries and rebuilds combos first

@@ -7,7 +7,12 @@ from typing import Optional
 def get_catalog() -> list[dict]:
     from app.database import get_db
     with get_db() as conn:
-        rows = conn.execute("SELECT * FROM item_catalog ORDER BY name").fetchall()
+        rows = conn.execute("""
+            SELECT ic.*, m.name AS metal_name
+            FROM item_catalog ic
+            LEFT JOIN metals m ON ic.metal_id = m.metal_id
+            ORDER BY ic.name
+        """).fetchall()
     return [dict(r) for r in rows]
 
 

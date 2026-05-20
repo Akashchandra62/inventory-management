@@ -7,7 +7,7 @@ from PyQt5.QtWidgets import (
     QPushButton, QTableWidget, QTableWidgetItem, QMessageBox,
     QGroupBox, QFormLayout, QDoubleSpinBox, QSpinBox,
     QComboBox, QFrame, QScrollArea, QHeaderView, QAbstractItemView,
-    QCompleter, QAbstractSpinBox, QDialog, QDateEdit, QApplication
+    QCompleter, QAbstractSpinBox, QDialog, QDateEdit, QApplication, QToolButton
 )
 from PyQt5.QtCore import Qt, QEvent, QTimer, QDate, QPoint, QObject
 from PyQt5.QtGui import QFont, QDoubleValidator
@@ -24,6 +24,59 @@ from services.metal_service import get_metals, get_metal_by_id, add_metal as _ad
 
 
 PURITY_OPTIONS = ["22Kt", "18Kt", "14Kt", "92.5", "99.9", "60-70", "Other"]
+
+
+class _ClickableDateEdit(QDateEdit):
+    """Opens the calendar popup on any click in the field, not just the arrow.
+
+    QDateEdit with calendarPopup=True draws its arrow using the ComboBox style —
+    there is no QToolButton child to find and click.  Instead we compute the arrow
+    subcontrol rect and send a synthetic mouse press at that position so Qt's own
+    QDateTimeEdit::mousePressEvent opens the calendar naturally.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setCalendarPopup(True)
+        # Clicks on the text area go to the internal QLineEdit, not to us
+        self.lineEdit().installEventFilter(self)
+
+    def eventFilter(self, obj, event):
+        if (obj is self.lineEdit()
+                and event.type() == QEvent.MouseButtonPress
+                and event.button() == Qt.LeftButton
+                and self.isEnabled()
+                and not self.calendarWidget().isVisible()):
+            # Defer so we are outside the current event-dispatch stack;
+            # sending a synthetic event synchronously here causes reentrancy.
+            QTimer.singleShot(0, self._open_calendar)
+            return True
+        return super().eventFilter(obj, event)
+
+    def _open_calendar(self):
+        if not self.isEnabled() or self.calendarWidget().isVisible():
+            return
+        from PyQt5.QtWidgets import QStyleOptionComboBox, QStyle
+        from PyQt5.QtGui import QMouseEvent
+        # QDateEdit with calendarPopup draws the arrow via CC_ComboBox style.
+        # We need a synthetic click that lands inside SC_ComboBoxArrow so that
+        # QDateTimeEdit::mousePressEvent opens the popup via its own code path.
+        opt = QStyleOptionComboBox()
+        opt.initFrom(self)
+        opt.rect = self.rect()          # ensure rect is the widget's local rect
+        arrow_rect = self.style().subControlRect(
+            QStyle.CC_ComboBox, opt, QStyle.SC_ComboBoxArrow, self
+        )
+        pos = (arrow_rect.center() if not arrow_rect.isEmpty()
+               else QPoint(self.width() - 12, self.height() // 2))
+        QApplication.sendEvent(
+            self,
+            QMouseEvent(
+                QEvent.MouseButtonPress, pos,
+                self.mapToGlobal(pos),
+                Qt.LeftButton, Qt.LeftButton, Qt.NoModifier,
+            ),
+        )
 
 
 class _MobileCompleter(QCompleter):
@@ -558,38 +611,6 @@ class InvoicePage(QWidget):
         _ref_lbl.setStyleSheet("color:#27ae60; font-weight:600;")
         pfl.addRow(_ref_lbl, _ref_w)
 
-        # Due Date — QDateEdit with calendar popup; sentinel QDate(2000,1,1) = "no date"
-        _due_date_w = QWidget(); _due_date_w.setStyleSheet("background:transparent;")
-        _due_date_h = QHBoxLayout(_due_date_w)
-        _due_date_h.setContentsMargins(0, 0, 0, 0); _due_date_h.setSpacing(4)
-
-        self.dte_due_date = QDateEdit()
-        self.dte_due_date.setCalendarPopup(True)
-        self.dte_due_date.setDisplayFormat("dd-MM-yyyy")
-        self.dte_due_date.setMinimumHeight(26)
-        self.dte_due_date.setFixedWidth(130)
-        self.dte_due_date.setMinimumDate(QDate(2000, 1, 1))
-        self.dte_due_date.setDate(QDate(2000, 1, 1))
-        self.dte_due_date.setSpecialValueText("Not set")
-        self.dte_due_date.setStyleSheet(
-            "QDateEdit{border:1px solid #ced4da;border-radius:4px;padding:1px 6px;font-size:12px;}"
-            "QDateEdit:focus{border:2px solid #3498db;background:#eaf6fd;}"
-        )
-
-        _btn_clear_due = QPushButton("✖")
-        _btn_clear_due.setFixedSize(26, 26)
-        _btn_clear_due.setToolTip("Clear due date")
-        _btn_clear_due.setStyleSheet(
-            "QPushButton{background:#e74c3c;color:white;border-radius:4px;"
-            "font-size:11px;font-weight:bold;border:none;}"
-            "QPushButton:hover{background:#c0392b;}"
-        )
-        _btn_clear_due.clicked.connect(lambda: self.dte_due_date.setDate(QDate(2000, 1, 1)))
-
-        _due_date_h.addWidget(self.dte_due_date)
-        _due_date_h.addStretch()
-        _due_date_h.addWidget(_btn_clear_due)
-        pfl.addRow("Due Date:", _due_date_w)
 
         self.txt_remarks = QLineEdit()
         self.txt_remarks.setPlaceholderText("Remarks (optional)")
@@ -695,7 +716,56 @@ class InvoicePage(QWidget):
         tfl.addRow("IGST:",  _tax_row_widget(self.spn_igst, self.lbl_igst_amt))
         tfl.addRow("NET PAYABLE:", self.lbl_grand)
 
+        # ── Due Date card (below NET PAYABLE) ──────────────────
+        self._frm_due_date = QFrame()
+        self._frm_due_date.setObjectName("due_date_card")
+        _dd_vlay = QVBoxLayout(self._frm_due_date)
+        _dd_vlay.setContentsMargins(10, 7, 10, 7)
+        _dd_vlay.setSpacing(5)
+
+        _dd_head = QHBoxLayout(); _dd_head.setSpacing(5)
+        _dd_cal_icon = QLabel("📅")
+        _dd_cal_icon.setStyleSheet("background:transparent;border:none;font-size:13px;")
+        _dd_cal_icon.setFixedWidth(18)
+        self._lbl_due_date_head = QLabel("Payment Due Date")
+        self._lbl_due_date_head.setStyleSheet(
+            "background:transparent;border:none;font-size:11px;font-weight:bold;"
+        )
+        _dd_head.addWidget(_dd_cal_icon)
+        _dd_head.addWidget(self._lbl_due_date_head, 1)
+        _dd_vlay.addLayout(_dd_head)
+
+        _dd_row = QHBoxLayout(); _dd_row.setSpacing(6)
+        self.dte_due_date = _ClickableDateEdit()
+        self.dte_due_date.setCalendarPopup(True)
+        self.dte_due_date.setDisplayFormat("dd-MM-yyyy")
+        self.dte_due_date.setMinimumHeight(30)
+        self.dte_due_date.setMinimumDate(QDate(2000, 1, 1))
+        self.dte_due_date.setDate(QDate(2000, 1, 1))
+        self.dte_due_date.setSpecialValueText("Select date")
+        self.dte_due_date.setStyleSheet(
+            "QDateEdit{border:1px solid #f0a500;border-radius:4px;padding:2px 6px;"
+            "font-size:12px;background:white;min-width:120px;}"
+            "QDateEdit:focus{border:2px solid #e67e22;background:#fff8f0;}"
+            "QDateEdit:disabled{background:#f0f0f0;color:#bbb;border:1px solid #e0e0e0;}"
+        )
+        self._btn_clear_due_date = QPushButton("✕ Clear")
+        self._btn_clear_due_date.setFixedHeight(30)
+        self._btn_clear_due_date.setStyleSheet(
+            "QPushButton{background:#e74c3c;color:white;border-radius:4px;"
+            "padding:2px 10px;font-size:11px;font-weight:bold;border:none;}"
+            "QPushButton:hover{background:#c0392b;}"
+            "QPushButton:disabled{background:#d5d5d5;color:#aaa;}"
+        )
+        self._btn_clear_due_date.clicked.connect(
+            lambda: self.dte_due_date.setDate(QDate(2000, 1, 1))
+        )
+        _dd_row.addWidget(self.dte_due_date, 1)
+        _dd_row.addWidget(self._btn_clear_due_date)
+        _dd_vlay.addLayout(_dd_row)
+
         _totals_vbox.addWidget(_tax_form_w)
+        _totals_vbox.addWidget(self._frm_due_date)
         _totals_vbox.addWidget(self._frm_dues)
         _totals_vbox.addStretch()
 
@@ -1291,6 +1361,36 @@ class InvoicePage(QWidget):
             self.txt_refund.blockSignals(True)
             self.txt_refund.setText(f"{abs(balance):.2f}")
             self.txt_refund.blockSignals(False)
+        self._update_due_date_state(max(balance, 0.0))
+
+    def _update_due_date_state(self, balance=None):
+        """Enable due-date picker only when there is an outstanding balance."""
+        if balance is None:
+            try:    balance = float(self.txt_due.text() or 0)
+            except: balance = 0.0
+        has_due = balance > 0
+        self.dte_due_date.setEnabled(has_due)
+        self._btn_clear_due_date.setEnabled(has_due)
+        if not has_due:
+            self.dte_due_date.setDate(QDate(2000, 1, 1))
+        if has_due:
+            self._frm_due_date.setStyleSheet(
+                "QFrame#due_date_card{background:#fff3e0;border:1.5px solid #e67e22;"
+                "border-radius:6px;}"
+            )
+            self._lbl_due_date_head.setStyleSheet(
+                "background:transparent;border:none;font-size:11px;"
+                "font-weight:bold;color:#c0392b;"
+            )
+        else:
+            self._frm_due_date.setStyleSheet(
+                "QFrame#due_date_card{background:#f7f7f7;border:1px solid #e0e0e0;"
+                "border-radius:6px;}"
+            )
+            self._lbl_due_date_head.setStyleSheet(
+                "background:transparent;border:none;font-size:11px;"
+                "font-weight:bold;color:#bbb;"
+            )
 
     def _auto_roundoff(self):
         """Fill round-off with the decimal fraction of the current grand total."""
@@ -1539,14 +1639,41 @@ class InvoicePage(QWidget):
             "QPushButton{background:#bdc3c7;color:#2c3e50;border-radius:5px;"
             "border:none;padding:0 14px;}"
         )
-        btn_fill.clicked.connect(lambda: dlg.done(2))
-        btn_only.clicked.connect(lambda: dlg.done(1))
+        # Error label shown inside the dialog on validation failure
+        err_lbl = QLabel("")
+        err_lbl.setStyleSheet(
+            "color:#e74c3c; font-size:11px; font-weight:bold; padding:4px 6px;"
+            "background:#fdf2f2; border:1px solid #f5c6c6; border-radius:4px;"
+        )
+        err_lbl.setWordWrap(True)
+        err_lbl.setVisible(False)
+        vl.addWidget(err_lbl)
+
+        def _validate_and_close(result_code):
+            errs = []
+            if not txt_name.text().strip():
+                errs.append("Item Name is required")
+            if cmb_metal.currentIndex() == 0:
+                errs.append("Metal is required")
+            if not txt_purity.text().strip():
+                errs.append("Purity is required")
+            if errs:
+                err_lbl.setText("⚠  " + "  ·  ".join(errs) + ".")
+                err_lbl.setVisible(True)
+                dlg.adjustSize()
+                return
+            err_lbl.setVisible(False)
+            dlg.done(result_code)
+
+        btn_fill.clicked.connect(lambda: _validate_and_close(2))
+        btn_only.clicked.connect(lambda: _validate_and_close(1))
         btn_cancel.clicked.connect(dlg.reject)
         btn_row.addWidget(btn_fill); btn_row.addWidget(btn_only); btn_row.addWidget(btn_cancel)
         vl.addLayout(btn_row)
 
-        # Enter: Name → Code → Purity → Rate → "Save & Add to Invoice"
-        _EnterNav([txt_name, txt_code, txt_purity, spn_rate], on_last=lambda: dlg.done(2), parent=dlg)
+        # Enter: Name → Code → Purity → Rate → validate & close
+        _EnterNav([txt_name, txt_code, txt_purity, spn_rate],
+                  on_last=lambda: _validate_and_close(2), parent=dlg)
 
         result = dlg.exec()
         if result == 0:
@@ -1556,9 +1683,6 @@ class InvoicePage(QWidget):
         code   = txt_code.text().strip().upper()
         purity = txt_purity.text().strip()
         rate   = spn_rate.value()
-        if not name:
-            QMessageBox.warning(self, "Validation", "Item Name is required.")
-            return
 
         midx     = cmb_metal.currentIndex()
         metal_id = cmb_metal.itemData(midx) if midx > 0 else ""
@@ -1971,6 +2095,7 @@ class InvoicePage(QWidget):
             self.dte_due_date.setDate(_d if _d.isValid() else QDate(2000, 1, 1))
         else:
             self.dte_due_date.setDate(QDate(2000, 1, 1))
+        self._update_due_date_state()
         self.txt_remarks.setText(inv.get("remarks", ""))
         self.txt_notes.setText(inv.get("notes", ""))
 
