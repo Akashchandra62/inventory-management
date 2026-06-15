@@ -107,6 +107,8 @@ class VendorPage(QWidget):
 
     def _search(self, text):
         q = text.lower()
+        if 0 < len(q) < 3:
+            return
         self._populate([v for v in self._all if q in v.get("vendor_name","").lower() or q in v.get("phone","")])
 
     def _populate(self, data):

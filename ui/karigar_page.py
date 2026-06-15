@@ -880,6 +880,7 @@ class KarigarPage(QWidget):
                     for it in tx.get("items",[])
                 )
                 cash_str = "—"
+                fg_str = f"-{fg:.3f}"
                 bg = QColor("#fde8e8")   # light red — TAKE
                 fg_color = QColor("#7b1a1a")
             else:  # GIVE
@@ -892,6 +893,7 @@ class KarigarPage(QWidget):
                 nwt   = float(tx.get("give_gold_net_wt", 0) or 0)
                 touch = f"{tx.get('give_gold_tounch',0):.1f}%" if tx.get("give_gold_net_wt") else "—"
                 cash_str = f"{cash:,.2f}"
+                fg_str = f"+{fg:.3f}"
                 bg = QColor("#e8f8ee")   # light green — GIVE
                 fg_color = QColor("#1a5e35")
 
@@ -902,7 +904,7 @@ class KarigarPage(QWidget):
                 tx_type, desc,
                 f"{nwt:.3f}" if nwt else "—",
                 touch,
-                f"{fg:.3f}",
+                fg_str,
                 cash_str,
             ]
             for c, v in enumerate(vals):
@@ -1122,15 +1124,16 @@ class KarigarDirectoryPage(QWidget):
             cash = float(tx.get("total_payment", tx.get("give_cash",0)) or 0)
 
             if tx_type == "TAKE":
-                running += fg; t_take += fg
+                running -= fg; t_take += fg
                 desc = "; ".join(f"{it.get('description','?')} x{it.get('pc',1)}" for it in tx.get("items",[]))
                 nwt  = sum(float(it.get("net_wt",0)) for it in tx.get("items",[]))
                 tounch_s = ", ".join(f"{it.get('tounch',0):.1f}%" for it in tx.get("items",[]))
                 cash_str = "—"
+                fg_str = f"-{fg:.3f}"
                 bg = QColor("#fde8e8")   # light red — TAKE
                 row_fg = QColor("#7b1a1a")
             else:
-                running -= fg; t_give += fg
+                running += fg; t_give += fg
                 parts = []
                 if tx.get("give_gold_net_wt",0): parts.append("Gold")
                 if tx.get("give_cash",0):         parts.append("Cash")
@@ -1138,12 +1141,13 @@ class KarigarDirectoryPage(QWidget):
                 nwt = float(tx.get("give_gold_net_wt",0) or 0)
                 tounch_s = f"{tx.get('give_gold_tounch',0):.1f}%" if tx.get("give_gold_net_wt") else "—"
                 cash_str = f"{cash:,.2f}"
+                fg_str = f"+{fg:.3f}"
                 bg = QColor("#e8f8ee")   # light green — GIVE
                 row_fg = QColor("#1a5e35")
 
             running = round(running, 3)
             vals = [tx.get("date",""), tx.get("memo_no",""), tx_type, desc,
-                    f"{nwt:.3f}" if nwt else "—", tounch_s, f"{fg:.3f}", cash_str, f"{running:.3f}"]
+                    f"{nwt:.3f}" if nwt else "—", tounch_s, fg_str, cash_str, f"{running:.3f}"]
             rows.append((vals, bg, row_fg))
 
         self.tbl_tx.setRowCount(0)
@@ -1163,7 +1167,7 @@ class KarigarDirectoryPage(QWidget):
         self.lbl_take_fg.setText(f"Fine Taken: {t_take:.3f} g")
         self.lbl_give_fg.setText(f"Fine Given: {t_give:.3f} g")
         self.lbl_dues.setText(f"Dues: {dues:.3f} g")
-        color = "#c0392b" if dues < 0 else ("#27ae60" if dues > 0 else "#2c3e50")
+        color = "#c0392b" if dues > 0 else ("#27ae60" if dues < 0 else "#2c3e50")
         self.lbl_dues.setStyleSheet(f"background:transparent;color:{color};font-weight:bold;")
 
     def _reset_filters(self):

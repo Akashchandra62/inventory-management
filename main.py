@@ -49,9 +49,14 @@ QPushButton.__init__ = _patched_btn_init
 
 
 class _SelectAllOnFocus(QObject):
-    """Select all text whenever a QLineEdit or spin-box gains focus."""
+    """Select all text whenever a QLineEdit or spin-box gains focus.
+    Skips selectAll when focus is returning from a completer popup or OS
+    autocomplete dropdown (PopupFocusReason) to prevent mid-typing text loss.
+    """
     def eventFilter(self, obj, event):
         if event.type() == QEvent.FocusIn and isinstance(obj, (QLineEdit, QAbstractSpinBox)):
+            if event.reason() == Qt.PopupFocusReason:
+                return False
             QTimer.singleShot(0, obj.selectAll)
         return False
 

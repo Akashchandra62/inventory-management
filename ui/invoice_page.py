@@ -177,7 +177,10 @@ class _CustCompleterNav(QObject):
                 else:
                     c.popup().hide()
             if self._next:
-                QTimer.singleShot(0, self._next.setFocus)
+                if callable(self._next):
+                    QTimer.singleShot(0, self._next)
+                else:
+                    QTimer.singleShot(0, self._next.setFocus)
             return True
 
         if event.key() == Qt.Key_Tab and popup_open:
@@ -856,7 +859,7 @@ class InvoicePage(QWidget):
         self._addr_nav    = _CustCompleterNav(self.txt_caddr,    None,                            self.txt_cemail,   parent=self)
         self._gst_nav     = _CustCompleterNav(self.txt_cust_gst, None,                            self.txt_aadhaar,  parent=self)
         self._aadhaar_nav = _CustCompleterNav(self.txt_aadhaar,  None,                            self.txt_pan,      parent=self)
-        self._pan_nav     = _CustCompleterNav(self.txt_pan,      None,                            None,              parent=self)
+        self._pan_nav     = _CustCompleterNav(self.txt_pan,      None,                            self._focus_first_item_field, parent=self)
 
         # ── Show dropdown when focusing back into mobile field with text ──
         self._mob_focus   = _CustFocusShow(self.txt_cmobile, parent=self)
@@ -1016,15 +1019,17 @@ class InvoicePage(QWidget):
         w_huid.setFrame(False)
         w_huid.setStyleSheet(_field_style)
 
-        w_purity = QComboBox()
-        w_purity.addItems(PURITY_OPTIONS)
-        w_purity.setEditable(True)
+        w_purity = QLineEdit()
+        w_purity.setPlaceholderText("Purity")
         w_purity.setFrame(False)
         w_purity.setStyleSheet(
-            "QComboBox{font-size:11px;padding:1px;background:transparent;border:none;}"
-            "QComboBox:focus{background:#eaf6fd;border:1px solid #3498db;border-radius:3px;}"
-            "QComboBox::drop-down{border:none;}"
+            "QLineEdit{font-size:11px;padding:1px;background:transparent;border:none;}"
+            "QLineEdit:focus{background:#eaf6fd;border:1px solid #3498db;border-radius:3px;}"
         )
+        _pur_cmp = QCompleter(PURITY_OPTIONS, w_purity)
+        _pur_cmp.setCaseSensitivity(Qt.CaseInsensitive)
+        _pur_cmp.setCompletionMode(QCompleter.PopupCompletion)
+        w_purity.setCompleter(_pur_cmp)
 
         w_gwt   = _dspn(dec=3)
         w_lwt   = _dspn(dec=3)   # less / deduction weight
@@ -1094,20 +1099,15 @@ class InvoicePage(QWidget):
         chain = [w_tag, w_name, w_huid, w_purity, w_gwt, w_lwt, w_nwt, w_qty, w_rate, w_mk_spn, w_other]
         rd['chain'] = chain
         for ci, w in enumerate(chain):
-            if isinstance(w, QComboBox) and w.isEditable():
-                # Editable QComboBox key events go to its internal QLineEdit, not the
-                # widget itself, so installEventFilter on the combo won't fire. Use
-                # returnPressed on the internal line edit instead.
-                nxt = chain[ci + 1] if ci + 1 < len(chain) else None
-                if nxt:
-                    w.lineEdit().returnPressed.connect(
-                        lambda _nw=nxt: QTimer.singleShot(0, lambda: self._focus_and_select(_nw))
-                    )
-            elif not isinstance(w, QLineEdit):
+            if isinstance(w, QLineEdit):
+                w._item_rd     = rd
+                w._chain_idx   = ci
+                w._is_chain_le = True   # Enter handled by returnPressed; arrow keys jump cells
+                w.installEventFilter(self)
+            else:
                 w._item_rd   = rd
                 w._chain_idx = ci
                 w.installEventFilter(self)
-                # For spinboxes, also install eventFilter on the internal lineEdit so Enter is caught
                 if hasattr(w, 'lineEdit') and w.lineEdit():
                     w.lineEdit()._item_rd   = rd
                     w.lineEdit()._chain_idx = ci
@@ -1115,6 +1115,7 @@ class InvoicePage(QWidget):
         w_tag.returnPressed.connect(lambda _rd=rd: self._focus_and_select(_rd['name']))
         w_name.returnPressed.connect(lambda _rd=rd: self._name_code_lookup(_rd))
         w_huid.returnPressed.connect(lambda _rd=rd: self._focus_and_select(_rd['purity']))
+        w_purity.returnPressed.connect(lambda _rd=rd: self._focus_and_select(_rd['gwt']))
 
         # When a name is chosen from the autocomplete dropdown, fill purity + rate
         if w_name.completer():
@@ -1210,7 +1211,7 @@ class InvoicePage(QWidget):
                 'metal':         _metal_name,
                 'metal_id':      _metal_id,
                 'hsn_code':      '7113',
-                'purity':        rd['purity'].currentText(),
+                'purity':        rd['purity'].text(),
                 'quantity':      rd['qty'].value(),
                 'weight':        gwt,
                 'less_weight':   round(rd['lwt'].value(), 3),
@@ -1255,8 +1256,22 @@ class InvoicePage(QWidget):
     def _focus_and_select(self, widget):
         """Focus a widget and select all its text for fast overwrite."""
         widget.setFocus()
-        if hasattr(widget, 'selectAll'):
+        if isinstance(widget, QComboBox) and widget.isEditable():
+            # Focusing a QComboBox transfers focus to its internal lineEdit; defer
+            # selectAll so it runs after focus events settle.
+            QTimer.singleShot(0, widget.lineEdit().selectAll)
+        elif isinstance(widget, QLineEdit):
+            # Defer for QLineEdit too — the global _SelectAllOnFocus also does this,
+            # but being explicit here covers cases where that filter fires before us.
+            QTimer.singleShot(0, widget.selectAll)
+        elif hasattr(widget, 'selectAll'):
             widget.selectAll()
+
+    def _focus_first_item_field(self):
+        """Jump from last customer field (PAN) to the Tag field of the first item row."""
+        if not self._row_widgets:
+            self._append_item_row()
+        self._focus_and_select(self._row_widgets[0]['tag'])
 
     def _name_code_lookup(self, rd: dict):
         """On Enter in item name: try code lookup first, then name lookup."""
@@ -1277,35 +1292,100 @@ class InvoicePage(QWidget):
                 self._apply_catalog_item(item, rd)
                 return
 
-        # No match — just advance to HUID
+        # No match — auto-create item in catalog so it appears in future dropdowns
+        if text:
+            add_catalog_item(text)
+            self._refresh_item_completers()
         QTimer.singleShot(0, lambda: self._focus_and_select(rd['huid']))
 
     def eventFilter(self, obj, event):
-        """Enter key navigation for item-table rows and payment fields."""
-        if event.type() == QEvent.KeyPress and event.key() in (Qt.Key_Return, Qt.Key_Enter):
-            # ── Item table spinbox chain ─────────────────────────
-            if hasattr(obj, '_item_rd') and hasattr(obj, '_chain_idx'):
-                rd    = obj._item_rd
-                chain = rd['chain']
-                idx   = obj._chain_idx
-                if idx + 1 < len(chain):
-                    QTimer.singleShot(0, lambda n=chain[idx + 1]: self._focus_and_select(n))
-                else:
-                    # Last item field: if this row has a name, start the next row;
-                    # if the row is empty, move to the payment section instead.
-                    if rd['name'].text().strip():
-                        QTimer.singleShot(0, self._append_item_row)
-                    else:
-                        QTimer.singleShot(0, lambda: self._focus_and_select(self.txt_cash))
-                return True   # consume — spinbox value commits on focusOut
+        """Enter and arrow key navigation for item-table rows and payment fields."""
+        if event.type() == QEvent.KeyPress:
+            key = event.key()
 
-            # ── Payment section chain ────────────────────────────
-            if hasattr(obj, '_pay_chain') and hasattr(obj, '_pay_idx'):
-                chain = obj._pay_chain
-                idx   = obj._pay_idx
-                if idx + 1 < len(chain):
-                    QTimer.singleShot(0, lambda n=chain[idx + 1]: self._focus_and_select(n))
-                return False
+            # ── Arrow key navigation in item table ─────────────────
+            if key in (Qt.Key_Left, Qt.Key_Right, Qt.Key_Up, Qt.Key_Down):
+                if hasattr(obj, '_item_rd') and hasattr(obj, '_chain_idx'):
+                    rd    = obj._item_rd
+                    chain = rd['chain']
+                    ci    = obj._chain_idx
+
+                    if key == Qt.Key_Left:
+                        if ci > 0:
+                            QTimer.singleShot(0, lambda n=chain[ci - 1]: self._focus_and_select(n))
+                        return True
+
+                    if key == Qt.Key_Right:
+                        if ci + 1 < len(chain):
+                            QTimer.singleShot(0, lambda n=chain[ci + 1]: self._focus_and_select(n))
+                        return True
+
+                    # For Up/Down: if the parent QComboBox has its dropdown open, let
+                    # the combo navigate its list instead of jumping rows.
+                    _par = obj.parent() if not isinstance(obj, QComboBox) else obj
+                    if isinstance(_par, QComboBox) and _par.view().isVisible():
+                        return False
+
+                    if key == Qt.Key_Up:
+                        row_idx = next((i for i, r in enumerate(self._row_widgets) if r is rd), -1)
+                        if row_idx > 0:
+                            prev_rd = self._row_widgets[row_idx - 1]
+                            prev_ci = min(ci, len(prev_rd['chain']) - 1)
+                            QTimer.singleShot(0, lambda n=prev_rd['chain'][prev_ci]: self._focus_and_select(n))
+                        return True
+
+                    if key == Qt.Key_Down:
+                        row_idx = next((i for i, r in enumerate(self._row_widgets) if r is rd), -1)
+                        if row_idx >= 0:
+                            if row_idx + 1 < len(self._row_widgets):
+                                nxt_rd = self._row_widgets[row_idx + 1]
+                                nxt_ci = min(ci, len(nxt_rd['chain']) - 1)
+                                QTimer.singleShot(0, lambda n=nxt_rd['chain'][nxt_ci]: self._focus_and_select(n))
+                            elif rd['name'].text().strip():
+                                self._append_item_row()
+                                nxt_rd = self._row_widgets[-1]
+                                nxt_ci = min(ci, len(nxt_rd['chain']) - 1)
+                                QTimer.singleShot(0, lambda n=nxt_rd['chain'][nxt_ci]: self._focus_and_select(n))
+                        return True
+
+            # ── Enter key navigation ─────────────────────────────────
+            if key in (Qt.Key_Return, Qt.Key_Enter):
+                if hasattr(obj, '_item_rd') and hasattr(obj, '_chain_idx'):
+                    # QLineEdits in the chain have their own returnPressed signals;
+                    # let those fire and don't double-handle here.
+                    if not getattr(obj, '_is_chain_le', False):
+                        rd    = obj._item_rd
+                        chain = rd['chain']
+                        idx   = obj._chain_idx
+                        if idx + 1 < len(chain):
+                            QTimer.singleShot(0, lambda n=chain[idx + 1]: self._focus_and_select(n))
+                        else:
+                            if rd['name'].text().strip():
+                                QTimer.singleShot(0, self._append_item_row)
+                            else:
+                                QTimer.singleShot(0, lambda: self._focus_and_select(self.txt_cash))
+                        return True
+
+                # ── Payment section: Enter moves forward ─────────────
+                if hasattr(obj, '_pay_chain') and hasattr(obj, '_pay_idx'):
+                    chain = obj._pay_chain
+                    idx   = obj._pay_idx
+                    if idx + 1 < len(chain):
+                        QTimer.singleShot(0, lambda n=chain[idx + 1]: self._focus_and_select(n))
+                    return False
+
+            # ── Payment section: Left/Right arrow navigation ─────────
+            if key in (Qt.Key_Left, Qt.Key_Right):
+                if hasattr(obj, '_pay_chain') and hasattr(obj, '_pay_idx'):
+                    chain = obj._pay_chain
+                    idx   = obj._pay_idx
+                    if key == Qt.Key_Left:
+                        if idx > 0:
+                            QTimer.singleShot(0, lambda n=chain[idx - 1]: self._focus_and_select(n))
+                    else:
+                        if idx + 1 < len(chain):
+                            QTimer.singleShot(0, lambda n=chain[idx + 1]: self._focus_and_select(n))
+                    return True
 
         return super().eventFilter(obj, event)
 
@@ -1723,11 +1803,7 @@ class InvoicePage(QWidget):
     def _fill_item_row(self, rd: dict, name: str, purity: str, rate: float):
         rd['name'].setText(name)
         if purity:
-            idx = rd['purity'].findText(purity)
-            if idx >= 0:
-                rd['purity'].setCurrentIndex(idx)
-            else:
-                rd['purity'].setCurrentText(purity)
+            rd['purity'].setText(purity)
         if rate:
             rd['rate'].setValue(rate)
         self._rebuild_items_from_table()
@@ -1870,17 +1946,13 @@ class InvoicePage(QWidget):
                     rate = live_rate
 
         if purity:
-            idx = rd['purity'].findText(purity)
-            if idx >= 0:
-                rd['purity'].setCurrentIndex(idx)
-            else:
-                rd['purity'].setCurrentText(purity)
+            rd['purity'].setText(purity)
         if rate:
             rd['rate'].setValue(rate)
         self._row_calc(rd)
         self._rebuild_items_from_table()
-        # Purity + rate are filled — jump straight to GWT
-        QTimer.singleShot(0, lambda: self._focus_and_select(rd['gwt']))
+        # Move to HUID so user can review/edit the auto-filled fields before GWT
+        QTimer.singleShot(0, lambda: self._focus_and_select(rd['huid']))
 
     def _autofill_item_by_name(self, name: str, rd: dict):
         """Called when the user picks a name from the autocomplete dropdown."""
@@ -1997,11 +2069,7 @@ class InvoicePage(QWidget):
 
             purity = item.get("purity", "")
             if purity:
-                pi = rd['purity'].findText(purity)
-                if pi >= 0:
-                    rd['purity'].setCurrentIndex(pi)
-                else:
-                    rd['purity'].setCurrentText(purity)
+                rd['purity'].setText(purity)
 
             rd['gwt'].blockSignals(True)
             rd['lwt'].blockSignals(True)

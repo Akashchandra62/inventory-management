@@ -239,7 +239,6 @@ class HomePage(QWidget):
         today_str = date.today().isoformat()
         today_inv = [i for i in self._all_invoices if i.get("date") == today_str]
         today_sales  = sum(i.get("grand_total", 0) for i in today_inv)
-        total_sales  = sum(i.get("grand_total", 0) for i in self._all_invoices)
         today_cash   = sum(float(i.get("cash_paid",  0)) for i in today_inv)
         today_upi    = sum(float(i.get("upi_paid",   0)) for i in today_inv)
         today_card   = sum(float(i.get("card_paid",  0)) for i in today_inv)
@@ -260,7 +259,6 @@ class HomePage(QWidget):
             ("today_card",    "💳", "Today's Card",     format_currency(today_card),    "#8e44ad"),
             ("today_cheque",  "🏦", "Today's Cheque",   format_currency(today_cheque),  "#16a085"),
             ("today_invoices","🧾", "Today's Invoices", str(len(today_inv)),            "#e67e22"),
-            ("total_sales",   "📊", "Total Revenue",    format_currency(total_sales),   "#c0392b"),
             ("total_invoices","📋", "Total Invoices",   str(len(self._all_invoices)),   "#7f8c8d"),
             ("stock",         "📦", "Stock Items",      str(len(inventory)),            "#1abc9c"),
             ("customers",     "👥", "Customers",        str(len(self._all_customers)),  "#2c3e50"),
@@ -297,7 +295,6 @@ class HomePage(QWidget):
             "today_card":     "Today's Card Payments",
             "today_cheque":   "Today's Cheque Payments",
             "today_invoices": "Today's Invoices",
-            "total_sales":    "Total Revenue",
             "total_invoices": "Total Invoices",
             "stock":          "Stock Items",
             "vendors":        "Vendors",
@@ -310,7 +307,7 @@ class HomePage(QWidget):
 
         invoice_keys = {
             "today_sales", "today_cash", "today_upi", "today_card",
-            "today_cheque", "today_invoices", "total_sales", "total_invoices",
+            "today_cheque", "today_invoices", "total_invoices",
             "total_dues", "today_dues",
         }
         enable = key in invoice_keys
@@ -344,7 +341,7 @@ class HomePage(QWidget):
         }
 
         if self._current_metric in (
-            "today_sales", "today_invoices", "total_sales", "total_invoices",
+            "today_sales", "today_invoices", "total_invoices",
             "today_cash", "today_upi", "today_card", "today_cheque",
             "total_dues", "today_dues",
         ):
